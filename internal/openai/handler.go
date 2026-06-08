@@ -19,6 +19,14 @@ type Handler struct {
 	client chatClient
 }
 
+type clientErrorResponse struct {
+	statusCode int
+	errType    string
+	message    string
+	retryAfter string
+	swallow    bool
+}
+
 // NewHandler creates a new OpenAI API handler backed by the given Copilot client.
 func NewHandler(client *copilot.Client) *Handler {
 	return &Handler{client: client}
@@ -151,11 +159,9 @@ func modeForModel(model string) string {
 func (h *Handler) fullResponse(w http.ResponseWriter, r *http.Request, input copilot.CompletionInput, req ChatCompletionRequest) {
 	text, _, err := h.client.Complete(r.Context(), input)
 	if err != nil {
-		if copilot.IsBlocked(err) {
-			WriteError(w, http.StatusForbidden, "authentication_error", err.Error())
+		if wrote := writeClientError(w, classifyClientError(err)); wrote {
 			return
 		}
-		WriteError(w, http.StatusBadGateway, "server_error", err.Error())
 		return
 	}
 
@@ -183,7 +189,9 @@ func (h *Handler) fullResponse(w http.ResponseWriter, r *http.Request, input cop
 func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request, input copilot.CompletionInput) {
 	events, err := h.client.StreamEvents(r.Context(), input)
 	if err != nil {
-		WriteError(w, http.StatusBadGateway, "server_error", err.Error())
+		if wrote := writeClientError(w, classifyClientError(err)); wrote {
+			return
+		}
 		return
 	}
 
@@ -214,54 +222,96 @@ func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request, input c
 	})
 
 	// Stream tokens.
-	for evt := range events {
-		switch evt.Type {
-		case copilot.EventAppendText:
-			sse.WriteJSON(ChatCompletionChunk{
-				ID:      completionID,
-				Object:  "chat.completion.chunk",
-				Created: created,
-				Model:   input.StreamModel,
-				Choices: []ChunkChoice{
-					{Index: 0, Delta: ChunkDelta{Content: evt.Text}},
-				},
-			})
-		case copilot.EventError:
-			log.Printf("stream error: %v", evt.Err)
-			// End stream on error.
-			doneReason := "stop"
-			sse.WriteDone(ChatCompletionChunk{
-				ID:      completionID,
-				Object:  "chat.completion.chunk",
-				Created: created,
-				Model:   input.StreamModel,
-				Choices: []ChunkChoice{
-					{Index: 0, Delta: ChunkDelta{}, FinishReason: &doneReason},
-				},
-			})
+	for {
+		select {
+		case <-r.Context().Done():
+			writeStreamDone(sse, completionID, created, input.StreamModel)
 			return
-		case copilot.EventDone:
-			doneReason := "stop"
-			sse.WriteDone(ChatCompletionChunk{
-				ID:      completionID,
-				Object:  "chat.completion.chunk",
-				Created: created,
-				Model:   input.StreamModel,
-				Choices: []ChunkChoice{
-					{Index: 0, Delta: ChunkDelta{}, FinishReason: &doneReason},
-				},
-			})
-			return
+		case evt, ok := <-events:
+			if !ok {
+				writeStreamDone(sse, completionID, created, input.StreamModel)
+				return
+			}
+
+			switch evt.Type {
+			case copilot.EventAppendText:
+				sse.WriteJSON(ChatCompletionChunk{
+					ID:      completionID,
+					Object:  "chat.completion.chunk",
+					Created: created,
+					Model:   input.StreamModel,
+					Choices: []ChunkChoice{
+						{Index: 0, Delta: ChunkDelta{Content: evt.Text}},
+					},
+				})
+			case copilot.EventError:
+				if copilot.IsClientCanceled(evt.Err) {
+					writeStreamDone(sse, completionID, created, input.StreamModel)
+					return
+				}
+				log.Printf("stream error: %v", evt.Err)
+				writeStreamDone(sse, completionID, created, input.StreamModel)
+				return
+			case copilot.EventDone:
+				writeStreamDone(sse, completionID, created, input.StreamModel)
+				return
+			}
 		}
 	}
+}
 
-	// If we get here without a done event, close gracefully.
+func classifyClientError(err error) clientErrorResponse {
+	switch {
+	case err == nil:
+		return clientErrorResponse{}
+	case copilot.IsClientCanceled(err):
+		return clientErrorResponse{swallow: true}
+	case copilot.IsBlocked(err):
+		return clientErrorResponse{
+			statusCode: http.StatusForbidden,
+			errType:    "authentication_error",
+			message:    err.Error(),
+		}
+	case copilot.IsCapacity(err):
+		return clientErrorResponse{
+			statusCode: http.StatusServiceUnavailable,
+			errType:    "server_error",
+			message:    err.Error(),
+			retryAfter: "1",
+		}
+	case copilot.IsTimeout(err):
+		return clientErrorResponse{
+			statusCode: http.StatusGatewayTimeout,
+			errType:    "server_error",
+			message:    err.Error(),
+		}
+	default:
+		return clientErrorResponse{
+			statusCode: http.StatusBadGateway,
+			errType:    "server_error",
+			message:    err.Error(),
+		}
+	}
+}
+
+func writeClientError(w http.ResponseWriter, resp clientErrorResponse) bool {
+	if resp.swallow {
+		return false
+	}
+	if resp.retryAfter != "" {
+		w.Header().Set("Retry-After", resp.retryAfter)
+	}
+	WriteError(w, resp.statusCode, resp.errType, resp.message)
+	return true
+}
+
+func writeStreamDone(sse *SSEWriter, completionID string, created int64, model string) {
 	doneReason := "stop"
 	sse.WriteDone(ChatCompletionChunk{
 		ID:      completionID,
 		Object:  "chat.completion.chunk",
 		Created: created,
-		Model:   input.StreamModel,
+		Model:   model,
 		Choices: []ChunkChoice{
 			{Index: 0, Delta: ChunkDelta{}, FinishReason: &doneReason},
 		},

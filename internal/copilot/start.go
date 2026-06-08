@@ -36,7 +36,7 @@ func (c *Client) startAnon(ctx context.Context) (*SessionState, error) {
 		convID = uuid.NewString()
 	}
 
-	wsURL, clientSessionID, err := buildWebSocketURL()
+	wsURL, clientSessionID, err := buildWebSocketURL(c.wsURL)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +88,7 @@ func (c *Client) acquireAnonCookies(ctx context.Context) ([]*http.Cookie, string
 		return nil, "", fmt.Errorf("marshal start body: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, copilotStartURL, bytes.NewReader(bodyBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.startURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, "", fmt.Errorf("create copilot start request: %w", err)
 	}
@@ -118,7 +118,7 @@ func (c *Client) acquireAnonCookies(ctx context.Context) ([]*http.Cookie, string
 		return nil, "", fmt.Errorf("copilot start reports anonymous user is blocked; websocket may not produce completions")
 	}
 
-	cookies := cookiesWithJarFallback(c.http.Jar, copilotStartURL, resp.Cookies())
+	cookies := cookiesWithJarFallback(c.http.Jar, c.startURL, resp.Cookies())
 	anon := findCookie(cookies, CookieAnon)
 	if anon == nil {
 		return nil, "", fmt.Errorf("copilot start did not return __Host-copilot-anon cookie")

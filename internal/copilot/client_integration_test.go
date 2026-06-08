@@ -1,0 +1,155 @@
+package copilot
+
+import (
+	"context"
+	"errors"
+	"reflect"
+	"testing"
+	"time"
+)
+
+func TestClientIntegration_Complete_returnsFullText_when_fakeUpstreamStreamsAppendText(t *testing.T) {
+	t.Parallel()
+
+	upstream := newFakeCopilotUpstream(t, fakeCopilotScenario{
+		conversationID: "conv-complete",
+		messageID:      "msg-complete",
+		appendTexts:    []string{"hello", " world"},
+		expectSend:     true,
+	})
+
+	client := upstream.newClient(t)
+
+	text, messageID, err := client.Complete(context.Background(), CompletionInput{
+		Prompt: "say hello",
+		Mode:   "smart",
+	})
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+
+	if text != "hello world" {
+		t.Fatalf("Complete() text = %q, want %q", text, "hello world")
+	}
+	if messageID != "msg-complete" {
+		t.Fatalf("Complete() messageID = %q, want %q", messageID, "msg-complete")
+	}
+
+	startReq := upstream.lastStartRequest()
+	if startReq.TimeZone != "UTC" {
+		t.Fatalf("start request timezone = %q, want %q", startReq.TimeZone, "UTC")
+	}
+	if !startReq.StartNewConversation {
+		t.Fatal("start request StartNewConversation = false, want true")
+	}
+
+	outboundEvents := upstream.recordedOutboundEvents()
+	if !reflect.DeepEqual(outboundEvents, []string{"setOptions", "send"}) {
+		t.Fatalf("outbound events = %v, want %v", outboundEvents, []string{"setOptions", "send"})
+	}
+
+	send := upstream.lastSendMessage()
+	if send.ConversationID != "conv-complete" {
+		t.Fatalf("send conversationID = %q, want %q", send.ConversationID, "conv-complete")
+	}
+	if got := send.Content[0].Text; got != "say hello" {
+		t.Fatalf("send prompt = %q, want %q", got, "say hello")
+	}
+}
+
+func TestClientIntegration_StreamEvents_emitsCurrentEventSequence_when_fakeUpstreamResponds(t *testing.T) {
+	t.Parallel()
+
+	upstream := newFakeCopilotUpstream(t, fakeCopilotScenario{
+		conversationID: "conv-stream",
+		messageID:      "msg-stream",
+		appendTexts:    []string{"stream", "ed"},
+		expectSend:     true,
+	})
+
+	client := upstream.newClient(t)
+
+	events, err := client.StreamEvents(context.Background(), CompletionInput{
+		Prompt: "stream this",
+		Mode:   "precise",
+	})
+	if err != nil {
+		t.Fatalf("StreamEvents() error = %v", err)
+	}
+
+	gotEvents := collectStreamEvents(t, events)
+	gotTypes := make([]StreamEventType, 0, len(gotEvents))
+	for _, evt := range gotEvents {
+		gotTypes = append(gotTypes, evt.Type)
+	}
+
+	wantTypes := []StreamEventType{
+		EventStartMessage,
+		EventAppendText,
+		EventAppendText,
+		EventDone,
+		EventDone,
+	}
+	if !reflect.DeepEqual(gotTypes, wantTypes) {
+		t.Fatalf("event types = %v, want %v", gotTypes, wantTypes)
+	}
+
+	if gotEvents[0].ConversationID != "conv-stream" {
+		t.Fatalf("start event conversationID = %q, want %q", gotEvents[0].ConversationID, "conv-stream")
+	}
+	if gotEvents[0].MessageID != "msg-stream" {
+		t.Fatalf("start event messageID = %q, want %q", gotEvents[0].MessageID, "msg-stream")
+	}
+	if gotEvents[1].Text != "stream" || gotEvents[2].Text != "ed" {
+		t.Fatalf("append texts = %q/%q, want %q/%q", gotEvents[1].Text, gotEvents[2].Text, "stream", "ed")
+	}
+}
+
+func TestClientIntegration_StartDelayHonorsContextDeadline(t *testing.T) {
+	t.Parallel()
+
+	upstream := newFakeCopilotUpstream(t, fakeCopilotScenario{
+		conversationID: "conv-delayed",
+		expectSend:     true,
+		startDelay:     200 * time.Millisecond,
+	})
+
+	client := upstream.newClient(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	_, _, err := client.Complete(ctx, CompletionInput{
+		Prompt: "will timeout",
+		Mode:   "smart",
+	})
+	if err == nil {
+		t.Fatal("Complete() error = nil, want context deadline exceeded")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Complete() error = %v, want %v", err, context.DeadlineExceeded)
+	}
+	if got := len(upstream.recordedOutboundEvents()); got != 0 {
+		t.Fatalf("outbound event count = %d, want 0", got)
+	}
+}
+
+func collectStreamEvents(t *testing.T, events <-chan StreamEvent) []StreamEvent {
+	t.Helper()
+
+	var collected []StreamEvent
+	timeout := time.NewTimer(2 * time.Second)
+	defer timeout.Stop()
+
+	for {
+		select {
+		case evt, ok := <-events:
+			if !ok {
+				return collected
+			}
+			collected = append(collected, evt)
+		case <-timeout.C:
+			t.Fatal("timed out waiting for stream events")
+		}
+	}
+}

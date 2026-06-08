@@ -38,16 +38,20 @@ func Test_newProxyFunc_usesConfiguredProxy_whenURLIsProvided(t *testing.T) {
 }
 
 func Test_NewClient_usesConfiguredProxyForHTTPAndWebSocket(t *testing.T) {
-	client, err := NewClient(
-		16,
-		time.Second,
-		time.Second,
-		time.Second,
-		time.Second,
-		false,
-		"UTC",
-		"http://proxy.internal:8080",
-	)
+	client, err := NewClient(ClientConfig{
+		MaxSessions:    16,
+		WarmSessions:   4,
+		SessionTTL:     time.Second,
+		CleanupInt:     time.Second,
+		ConnTimeout:    time.Second,
+		Timeout:        time.Second,
+		WSReadTimeout:  time.Minute,
+		WSWriteTimeout: time.Second,
+		WSPingInterval: 25 * time.Second,
+		Debug:          false,
+		TimeZone:       "UTC",
+		ProxyURL:       "http://proxy.internal:8080",
+	})
 	if err != nil {
 		t.Fatalf("NewClient returned error: %v", err)
 	}

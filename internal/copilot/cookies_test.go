@@ -26,7 +26,7 @@ func Test_cookiesWithJarFallback_usesJarCookies_whenStartOmitsSetCookie(t *testi
 	if err != nil {
 		t.Fatalf("cookiejar.New returned error: %v", err)
 	}
-	parsed, err := url.Parse(copilotStartURL)
+	parsed, err := url.Parse(defaultCopilotStartURL)
 	if err != nil {
 		t.Fatalf("url.Parse returned error: %v", err)
 	}
@@ -35,7 +35,7 @@ func Test_cookiesWithJarFallback_usesJarCookies_whenStartOmitsSetCookie(t *testi
 		{Name: "__cf_bm", Value: "cloudflare-token"},
 	})
 
-	got := cookiesWithJarFallback(jar, copilotStartURL, nil)
+	got := cookiesWithJarFallback(jar, defaultCopilotStartURL, nil)
 
 	if findCookie(got, CookieAnon) == nil {
 		t.Fatalf("cookiesWithJarFallback() did not return %s: %v", CookieAnon, got)

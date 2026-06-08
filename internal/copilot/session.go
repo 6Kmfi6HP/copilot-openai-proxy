@@ -2,6 +2,7 @@ package copilot
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -16,66 +17,50 @@ type SessionState struct {
 	Connected       bool
 	CreatedAt       time.Time
 	LastUsedAt      time.Time
+	lease           *sessionLease
 }
 
 func (c *Client) getOrCreateSession(ctx context.Context) (*SessionState, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	sessionCtx, cancel := c.withRequestTimeout(ctx)
+	defer cancel()
 
-	session, err := c.startAnon(ctx)
+	lease, err := c.sessionMgr.acquire(sessionCtx)
 	if err != nil {
 		return nil, err
 	}
 
-	c.sessions[session.ConversationID] = session
-	c.byAge = append(c.byAge, session.ConversationID)
-	c.maybeEvictLocked()
-
+	session := lease.Session()
+	if session == nil {
+		lease.Release()
+		return nil, fmt.Errorf("copilot session manager returned nil session")
+	}
+	session.lease = lease
 	return session, nil
 }
 
-func (c *Client) maybeEvictLocked() {
-	for len(c.sessions) > c.maxSessions {
-		c.evictOldestLocked()
+func (c *Client) releaseSession(session *SessionState) {
+	if session == nil || session.lease == nil {
+		return
 	}
-	c.compactLocked()
-}
-
-func (c *Client) evictOldestLocked() {
-	for _, id := range c.byAge {
-		if s, ok := c.sessions[id]; ok {
-			s.Connected = false
-			if s.Conn != nil {
-				s.Conn.Close()
-			}
-			delete(c.sessions, id)
-			return
-		}
-	}
-}
-
-func (c *Client) compactLocked() {
-	var alive []string
-	for _, id := range c.byAge {
-		if _, ok := c.sessions[id]; ok {
-			alive = append(alive, id)
-		}
-	}
-	c.byAge = alive
+	session.lease.Release()
 }
 
 func (c *Client) InvalidateSession(conversationID string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	s, ok := c.sessions[conversationID]
-	if !ok {
+	if c.sessionMgr == nil {
 		return
 	}
-	s.Connected = false
-	if s.Conn != nil {
-		s.Conn.Close()
+	c.sessionMgr.invalidate(conversationID)
+}
+
+func (c *Client) withRequestTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	delete(c.sessions, conversationID)
-	c.compactLocked()
+	if c.timeout <= 0 {
+		return ctx, func() {}
+	}
+	if _, hasDeadline := ctx.Deadline(); hasDeadline {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, c.timeout)
 }

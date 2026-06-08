@@ -18,16 +18,22 @@ import (
 func main() {
 	cfg := config.Load()
 
-	client, err := copilot.NewClient(
-		cfg.MaxSessions,
-		time.Duration(cfg.SessionTTL)*time.Second,
-		time.Duration(cfg.CleanupInterval)*time.Second,
-		time.Duration(cfg.ConnTimeout)*time.Second,
-		time.Duration(cfg.Timeout)*time.Second,
-		cfg.Debug,
-		cfg.TimeZone,
-		cfg.ProxyURL,
-	)
+	client, err := copilot.NewClient(copilot.ClientConfig{
+		MaxSessions:    cfg.MaxSessions,
+		WarmSessions:   cfg.WarmSessions,
+		SessionTTL:     time.Duration(cfg.SessionTTL) * time.Second,
+		CleanupInt:     time.Duration(cfg.CleanupInterval) * time.Second,
+		ConnTimeout:    time.Duration(cfg.ConnTimeout) * time.Second,
+		Timeout:        time.Duration(cfg.Timeout) * time.Second,
+		WSReadTimeout:  time.Duration(cfg.WSReadTimeout) * time.Second,
+		WSWriteTimeout: time.Duration(cfg.WSWriteTimeout) * time.Second,
+		WSPingInterval: time.Duration(cfg.WSPingInterval) * time.Second,
+		Debug:          cfg.Debug,
+		TimeZone:       cfg.TimeZone,
+		ProxyURL:       cfg.ProxyURL,
+		StartURL:       cfg.CopilotStartURL,
+		WSURL:          cfg.CopilotWSURL,
+	})
 	if err != nil {
 		log.Fatalf("failed to create copilot client: %v", err)
 	}

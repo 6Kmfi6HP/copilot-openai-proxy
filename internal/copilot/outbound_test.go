@@ -153,7 +153,7 @@ func Test_protocolModeAndProduct_mapsPublicModelsToCopilotFields(t *testing.T) {
 }
 
 func Test_buildWebSocketURL_addsReferenceQuery_whenCalled(t *testing.T) {
-	rawURL, clientSessionID, err := buildWebSocketURL()
+	rawURL, clientSessionID, err := buildWebSocketURL(defaultCopilotWSURL)
 
 	if err != nil {
 		t.Fatalf("buildWebSocketURL returned error: %v", err)

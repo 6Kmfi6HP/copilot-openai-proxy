@@ -72,13 +72,19 @@ Flags and environment variables can be mixed. Command-line flags take precedence
 | Listen port | `-port` | `PORT` | `8080` |
 | API key | `-api-key` | `API_KEY` | empty |
 | Max sessions | `-max-sessions` | `MAX_SESSIONS` | `1000` |
+| Warm idle sessions | `-warm-sessions` | `WARM_SESSIONS` | `4` |
 | Session TTL | `-session-ttl` | `SESSION_TTL` | `1800` |
 | Cleanup interval | `-cleanup-interval` | `CLEANUP_INTERVAL` | `300` |
 | WebSocket connect timeout | `-conn-timeout` | `CONN_TIMEOUT` | `20` |
-| Request timeout | `-timeout` | `TIMEOUT` | `120` |
+| Default acquire/start timeout | `-timeout` | `TIMEOUT` | `120` |
+| WebSocket read timeout | `-ws-read-timeout` | `WS_READ_TIMEOUT` | `60` |
+| WebSocket write timeout | `-ws-write-timeout` | `WS_WRITE_TIMEOUT` | `10` |
+| WebSocket ping interval | `-ws-ping-interval` | `WS_PING_INTERVAL` | `25` |
 | Time zone | `-timezone` | `TIMEZONE` | `Asia/Shanghai` |
 | Debug logging | `-debug` | `DEBUG` | `false` |
 | Explicit outbound proxy | `-proxy-url` | `PROXY_URL` | empty |
+
+`WARM_SESSIONS` is capped at `MAX_SESSIONS`. `TIMEOUT` is used as the default session acquire/start budget when the incoming HTTP request does not already carry a deadline.
 
 ### Proxy Support
 
@@ -100,6 +106,17 @@ API_KEY=sk-change-me \
 PROXY_URL=http://192.168.1.10:7890 \
 ./copilot-openai-proxy -host 0.0.0.0 -port 8080
 ```
+
+### Advanced QA Overrides
+
+For deterministic local QA only, you can override the upstream start and WebSocket endpoints with environment variables. There are no matching CLI flags for these advanced overrides.
+
+```bash
+COPILOT_START_URL=http://127.0.0.1:8081/c/api/start
+COPILOT_WS_URL=ws://127.0.0.1:8081/c/api/chat
+```
+
+When unset, the proxy uses the normal Microsoft Copilot endpoints.
 
 ## API Examples
 

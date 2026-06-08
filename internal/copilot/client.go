@@ -8,19 +8,12 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
 
 const (
-	// CopilotStartURL fetches an anonymous session cookie (POST, not GET).
-	copilotStartURL = "https://copilot.microsoft.com/c/api/start"
-
-	// CopilotWSURL is the WebSocket endpoint.
-	copilotWSURL = "wss://copilot.microsoft.com/c/api/chat"
-
 	// CopilotOrigin is the origin header for WebSocket connections.
 	copilotOrigin = "https://copilot.microsoft.com"
 
@@ -44,28 +37,34 @@ type CompletionInput struct {
 
 // Client manages Copilot WebSocket sessions.
 type Client struct {
-	http        *http.Client
-	wsDialer    *websocket.Dialer
-	mu          sync.Mutex
-	sessions    map[string]*SessionState // conversationID → session
-	byAge       []string                 // LRU order for eviction
-	maxSessions int
-	sessionTTL  time.Duration
-	cleanupInt  time.Duration
-	connTimeout time.Duration
-	timeout     time.Duration
-	debug       bool
-	timeZone    string // timezone sent in start request body
+	http           *http.Client
+	wsDialer       *websocket.Dialer
+	sessionMgr     *sessionManager
+	maxSessions    int
+	warmSessions   int
+	sessionTTL     time.Duration
+	cleanupInt     time.Duration
+	connTimeout    time.Duration
+	timeout        time.Duration
+	wsReadTimeout  time.Duration
+	wsWriteTimeout time.Duration
+	wsPingInterval time.Duration
+	debug          bool
+	timeZone       string // timezone sent in start request body
+	startURL       string
+	wsURL          string
 }
 
 // NewClient creates a Copilot client that obtains anonymous cookies
 // from the Copilot service and pools WebSocket sessions.
-func NewClient(maxSessions int, sessionTTL, cleanupInt, connTimeout, timeout time.Duration, debug bool, timeZone, proxyURL string) (*Client, error) {
+func NewClient(cfg ClientConfig) (*Client, error) {
+	cfg = cfg.normalized()
+
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		return nil, fmt.Errorf("create cookie jar: %w", err)
 	}
-	proxyFunc, err := newProxyFunc(proxyURL)
+	proxyFunc, err := newProxyFunc(cfg.ProxyURL)
 	if err != nil {
 		return nil, fmt.Errorf("configure outbound proxy: %w", err)
 	}
@@ -74,34 +73,36 @@ func NewClient(maxSessions int, sessionTTL, cleanupInt, connTimeout, timeout tim
 		return nil, fmt.Errorf("default transport has unexpected type %T", http.DefaultTransport)
 	}
 
-	if timeZone == "" {
-		timeZone = "Asia/Shanghai"
-	}
-
 	c := &Client{
 		http: &http.Client{
 			Jar:       jar,
-			Timeout:   15 * time.Second,
+			Timeout:   cfg.Timeout,
 			Transport: transport.Clone(),
 		},
 		wsDialer: &websocket.Dialer{
 			Proxy:            proxyFunc,
-			HandshakeTimeout: connTimeout,
+			HandshakeTimeout: cfg.ConnTimeout,
 		},
-		sessions:    make(map[string]*SessionState),
-		maxSessions: maxSessions,
-		sessionTTL:  sessionTTL,
-		cleanupInt:  cleanupInt,
-		connTimeout: connTimeout,
-		timeout:     timeout,
-		debug:       debug,
-		timeZone:    timeZone,
+		maxSessions:    cfg.MaxSessions,
+		warmSessions:   cfg.WarmSessions,
+		sessionTTL:     cfg.SessionTTL,
+		cleanupInt:     cfg.CleanupInt,
+		connTimeout:    cfg.ConnTimeout,
+		timeout:        cfg.Timeout,
+		wsReadTimeout:  cfg.WSReadTimeout,
+		wsWriteTimeout: cfg.WSWriteTimeout,
+		wsPingInterval: cfg.WSPingInterval,
+		debug:          cfg.Debug,
+		timeZone:       cfg.TimeZone,
+		startURL:       cfg.StartURL,
+		wsURL:          cfg.WSURL,
 	}
 	httpTransport, ok := c.http.Transport.(*http.Transport)
 	if !ok {
 		return nil, fmt.Errorf("copilot transport has unexpected type %T", c.http.Transport)
 	}
 	httpTransport.Proxy = proxyFunc
+	c.sessionMgr = newSessionManagerWithWarmPool(cfg.MaxSessions, cfg.WarmSessions, c.startAnon)
 	return c, nil
 }
 
@@ -111,19 +112,22 @@ func (c *Client) Complete(ctx context.Context, input CompletionInput) (string, s
 	if err != nil {
 		return "", "", fmt.Errorf("get session: %w", err)
 	}
+	defer c.releaseSession(session)
 
 	events := make(chan StreamEvent, 128)
 	done := make(chan struct{})
+	pump := c.newConnPump(ctx, session.Conn)
 	go func() {
 		defer close(done)
 		defer close(events)
-		c.readLoop(session, events)
+		pump.run(events)
 	}()
 
 	// Send the prompt via "send" event with the conversation ID.
 	log.Printf("copilot send event=send session_id=%s conversation_id=%s prompt_len=%d",
 		session.ClientSessionID, session.ConversationID, len(input.Prompt))
-	if err := sendEvent(session.Conn, newSendMessage(input.Prompt, session.ConversationID, input.Mode)); err != nil {
+	if err := pump.send(ctx, newSendMessage(input.Prompt, session.ConversationID, input.Mode)); err != nil {
+		c.InvalidateSession(session.ConversationID)
 		return "", "", fmt.Errorf("copilot websocket send: %w", err)
 	}
 
@@ -153,12 +157,15 @@ func (c *Client) StreamEvents(ctx context.Context, input CompletionInput) (<-cha
 	}
 
 	events := make(chan StreamEvent, 128)
+	pump := c.newConnPump(ctx, session.Conn)
 	go func() {
+		defer c.releaseSession(session)
 		defer close(events)
-		c.readLoop(session, events)
+		pump.run(events)
 	}()
 
-	if err := sendEvent(session.Conn, newSendMessage(input.Prompt, session.ConversationID, input.Mode)); err != nil {
+	if err := pump.send(ctx, newSendMessage(input.Prompt, session.ConversationID, input.Mode)); err != nil {
+		c.InvalidateSession(session.ConversationID)
 		return nil, fmt.Errorf("copilot websocket send: %w", err)
 	}
 
@@ -166,6 +173,10 @@ func (c *Client) StreamEvents(ctx context.Context, input CompletionInput) (<-cha
 }
 
 func (c *Client) waitForConnected(conn *websocket.Conn) error {
+	if c.timeout > 0 {
+		_ = conn.SetReadDeadline(time.Now().Add(c.timeout))
+		defer conn.SetReadDeadline(time.Time{})
+	}
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
@@ -197,40 +208,13 @@ func (c *Client) readLoop(session *SessionState, events chan<- StreamEvent) {
 	defer func() {
 		session.Connected = false
 	}()
+	c.newConnPump(context.Background(), session.Conn).run(events)
+}
 
-	for {
-		_, msg, err := session.Conn.ReadMessage()
-		if err != nil {
-			if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
-				events <- StreamEvent{Type: EventDone}
-				return
-			}
-			events <- StreamEvent{Type: EventError, Err: fmt.Errorf("copilot websocket read failed: %w", err)}
-			return
-		}
-
-		evt, err := parseServerEvent(msg)
-		if err != nil {
-			continue
-		}
-
-		if c.debug {
-			log.Printf("copilot event raw bytes=%d data=%q", len(msg), string(msg))
-		}
-
-		// Handle challenge events inline (they need a response on the WebSocket).
-		if evt.Type == EventChallenge {
-			answer := solveHashcash(evt.ChallengeParam)
-			log.Printf("copilot challenge solved: param=%s answer=%s", evt.ChallengeParam, answer)
-			if err := sendEvent(session.Conn, newChallengeAnswer(answer)); err != nil {
-				log.Printf("copilot failed to send challenge answer: %v", err)
-			}
-			continue // Don't forward challenge to caller
-		}
-		if evt.Type == EventIgnore {
-			continue
-		}
-
-		events <- evt
-	}
+func (c *Client) newConnPump(ctx context.Context, conn *websocket.Conn) *connPump {
+	pump := newConnPump(ctx, conn, c.debug)
+	pump.readTimeout = c.wsReadTimeout
+	pump.writeTimeout = c.wsWriteTimeout
+	pump.pingInterval = c.wsPingInterval
+	return pump
 }

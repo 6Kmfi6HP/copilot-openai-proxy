@@ -8,9 +8,9 @@ import (
 	"github.com/google/uuid"
 )
 
-func buildWebSocketURL() (string, string, error) {
+func buildWebSocketURL(baseURL string) (string, string, error) {
 	clientSessionID := uuid.NewString()
-	parsed, err := url.Parse(copilotWSURL)
+	parsed, err := url.Parse(baseURL)
 	if err != nil {
 		return "", "", fmt.Errorf("parse copilot websocket URL: %w", err)
 	}
