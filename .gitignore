@@ -1,0 +1,31 @@
+# Binaries
+copilot-openai-proxy
+/copilot-openai-proxy
+
+# Test binaries
+*.test
+
+# Output
+*.out
+*.exe
+
+# Dependency directories
+/vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Build cache
+.cache/
