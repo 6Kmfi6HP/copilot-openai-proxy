@@ -87,6 +87,11 @@ type sendMessage struct {
 	Product        string        `json:"product"`
 }
 
+type challengeAnswerMessage struct {
+	Event  string `json:"event"`
+	Answer string `json:"answer"`
+}
+
 func defaultSetOptions() setOptionsMessage {
 	return setOptionsMessage{
 		Event:          "setOptions",

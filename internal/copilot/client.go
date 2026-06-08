@@ -60,10 +60,18 @@ type Client struct {
 
 // NewClient creates a Copilot client that obtains anonymous cookies
 // from the Copilot service and pools WebSocket sessions.
-func NewClient(maxSessions int, sessionTTL, cleanupInt, connTimeout, timeout time.Duration, debug bool, timeZone string) (*Client, error) {
+func NewClient(maxSessions int, sessionTTL, cleanupInt, connTimeout, timeout time.Duration, debug bool, timeZone, proxyURL string) (*Client, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		return nil, fmt.Errorf("create cookie jar: %w", err)
+	}
+	proxyFunc, err := newProxyFunc(proxyURL)
+	if err != nil {
+		return nil, fmt.Errorf("configure outbound proxy: %w", err)
+	}
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return nil, fmt.Errorf("default transport has unexpected type %T", http.DefaultTransport)
 	}
 
 	if timeZone == "" {
@@ -72,11 +80,12 @@ func NewClient(maxSessions int, sessionTTL, cleanupInt, connTimeout, timeout tim
 
 	c := &Client{
 		http: &http.Client{
-			Jar:     jar,
-			Timeout: 15 * time.Second,
+			Jar:       jar,
+			Timeout:   15 * time.Second,
+			Transport: transport.Clone(),
 		},
 		wsDialer: &websocket.Dialer{
-			Proxy:            http.ProxyFromEnvironment,
+			Proxy:            proxyFunc,
 			HandshakeTimeout: connTimeout,
 		},
 		sessions:    make(map[string]*SessionState),
@@ -88,6 +97,11 @@ func NewClient(maxSessions int, sessionTTL, cleanupInt, connTimeout, timeout tim
 		debug:       debug,
 		timeZone:    timeZone,
 	}
+	httpTransport, ok := c.http.Transport.(*http.Transport)
+	if !ok {
+		return nil, fmt.Errorf("copilot transport has unexpected type %T", c.http.Transport)
+	}
+	httpTransport.Proxy = proxyFunc
 	return c, nil
 }
 
@@ -208,10 +222,7 @@ func (c *Client) readLoop(session *SessionState, events chan<- StreamEvent) {
 		if evt.Type == EventChallenge {
 			answer := solveHashcash(evt.ChallengeParam)
 			log.Printf("copilot challenge solved: param=%s answer=%s", evt.ChallengeParam, answer)
-			if err := sendEvent(session.Conn, map[string]string{
-				"type":   "answer",
-				"answer": answer,
-			}); err != nil {
+			if err := sendEvent(session.Conn, newChallengeAnswer(answer)); err != nil {
 				log.Printf("copilot failed to send challenge answer: %v", err)
 			}
 			continue // Don't forward challenge to caller

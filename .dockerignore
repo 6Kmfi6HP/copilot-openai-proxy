@@ -25,7 +25,3 @@ LICENSE
 # Environment
 .env
 .env.local
-
-# Test
-internal/
-cmd/

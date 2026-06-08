@@ -1,185 +1,273 @@
 # copilot-openai-proxy
 
-[![Go Version](https://img.shields.io/badge/Go-1.26+-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![CI](https://github.com/6Kmfi6HP/copilot-openai-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/6Kmfi6HP/copilot-openai-proxy/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/6Kmfi6HP/copilot-openai-proxy)](https://github.com/6Kmfi6HP/copilot-openai-proxy/releases)
+[![GHCR](https://img.shields.io/badge/GHCR-ready-black)](https://github.com/6Kmfi6HP/copilot-openai-proxy/pkgs/container/copilot-openai-proxy)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-Convert Microsoft Copilot (copilot.microsoft.com) WebSocket completions into an OpenAI-compatible HTTP API.
+Convert Microsoft Copilot WebSocket completions into an OpenAI-compatible HTTP API.
 
-> [中文说明](#中文说明)
+This project is useful when you want to point OpenAI SDKs, curl scripts, or existing tooling at a self-hosted proxy endpoint instead of calling Copilot directly.
+
+> 中文说明见下方的 [中文使用说明](#中文使用说明)
 
 ## Features
 
-- **OpenAI-compatible API** — drop-in replacement for `/v1/chat/completions` and `/v1/models`
-- **Streaming support** — SSE (Server-Sent Events) for real-time token delivery
-- **Model selection** — `smart` (default), `creative`, `balanced`, `precise`
-- **API key auth** — optional `Authorization: Bearer <key>` gating
-- **Session pooling** — configurable session TTL and max concurrent sessions
-- **Single binary** — zero runtime dependencies, just build and run
-- **Docker-ready** — multi-stage Alpine build included
+- OpenAI-compatible endpoints: `POST /v1/chat/completions`, `GET /v1/models`
+- Streaming SSE responses
+- Public models: `smart`, `creative`, `balanced`, `precise`
+- Optional bearer-token protection
+- Multi-arch Docker image publishing to GHCR
+- GitHub Releases with prebuilt binaries
+- Docker Compose deployment template
+- Outbound proxy support through environment variables
 
 ## Quick Start
 
-### Build from Source
+### Run a released binary
+
+Download a release archive from [GitHub Releases](https://github.com/6Kmfi6HP/copilot-openai-proxy/releases), unpack it, then:
+
+```bash
+./copilot-openai-proxy -api-key sk-change-me
+```
+
+### Build from source
 
 ```bash
 git clone https://github.com/6Kmfi6HP/copilot-openai-proxy.git
 cd copilot-openai-proxy
 make build
-./copilot-openai-proxy
+./copilot-openai-proxy -api-key sk-change-me
 ```
 
-Or with Go install:
+### Install with Go
 
 ```bash
-go install copilot-openai-proxy/cmd/copilot-openai-proxy@latest
+go install github.com/6Kmfi6HP/copilot-openai-proxy/cmd/copilot-openai-proxy@latest
 ```
 
-### Docker
+### Run with Docker
 
 ```bash
-docker build -t copilot-openai-proxy .
-docker run --rm -p 8080:8080 copilot-openai-proxy
+docker run --rm -p 8080:8080 \
+  -e API_KEY=sk-change-me \
+  ghcr.io/6kmfi6hp/copilot-openai-proxy:latest
 ```
 
-### Command Line Flags
-
-```
--api-key string       API key; when set, requests must include Authorization header
--cleanup-interval int session cleanup interval in seconds (default 300)
--conn-timeout int     WebSocket connection timeout in seconds (default 20)
--debug                enable raw protocol logging
--host string          listen host (default "127.0.0.1")
--max-sessions int     maximum in-memory sessions (default 1000)
--port string          listen port (default "8080")
--session-ttl int      session TTL in seconds (default 1800)
--timeout int          request timeout in seconds (default 120)
--timezone string      timezone sent to Copilot (default "Asia/Shanghai")
-```
-
-### Example Requests
+### Run with Docker Compose
 
 ```bash
-# Non-streaming
-curl http://localhost:8080/v1/chat/completions \
-  -H "Authorization: Bearer sk-your-key" \
+cp .env.example .env
+docker compose up -d
+```
+
+## Configuration
+
+Flags and environment variables can be mixed. Command-line flags take precedence.
+
+| Purpose | Flag | Environment variable | Default |
+| --- | --- | --- | --- |
+| Listen host | `-host` | `HOST` | `127.0.0.1` |
+| Listen port | `-port` | `PORT` | `8080` |
+| API key | `-api-key` | `API_KEY` | empty |
+| Max sessions | `-max-sessions` | `MAX_SESSIONS` | `1000` |
+| Session TTL | `-session-ttl` | `SESSION_TTL` | `1800` |
+| Cleanup interval | `-cleanup-interval` | `CLEANUP_INTERVAL` | `300` |
+| WebSocket connect timeout | `-conn-timeout` | `CONN_TIMEOUT` | `20` |
+| Request timeout | `-timeout` | `TIMEOUT` | `120` |
+| Time zone | `-timezone` | `TIMEZONE` | `Asia/Shanghai` |
+| Debug logging | `-debug` | `DEBUG` | `false` |
+| Explicit outbound proxy | `-proxy-url` | `PROXY_URL` | empty |
+
+### Proxy Support
+
+The proxy supports two ways to route outbound Copilot traffic:
+
+1. Set `PROXY_URL` when you want to force a specific upstream proxy for both the Copilot HTTP start request and the WebSocket connection.
+2. Use standard Go proxy environment variables such as `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and `NO_PROXY`.
+
+Example:
+
+```bash
+API_KEY=sk-change-me \
+PROXY_URL=http://127.0.0.1:7890 \
+./copilot-openai-proxy -host 0.0.0.0 -port 8080
+```
+
+## API Examples
+
+### Non-streaming completion
+
+```bash
+curl http://127.0.0.1:8080/v1/chat/completions \
+  -H "Authorization: Bearer sk-change-me" \
   -H "Content-Type: application/json" \
-  -d '{"model":"smart","messages":[{"role":"user","content":"hello"}]}'
+  -d '{
+    "model": "smart",
+    "messages": [
+      {"role": "user", "content": "hello"}
+    ]
+  }'
+```
 
-# Streaming
-curl http://localhost:8080/v1/chat/completions \
-  -H "Authorization: Bearer sk-your-key" \
+### Streaming completion
+
+```bash
+curl http://127.0.0.1:8080/v1/chat/completions \
+  -H "Authorization: Bearer sk-change-me" \
   -H "Content-Type: application/json" \
-  -d '{"model":"smart","messages":[{"role":"user","content":"hello"}],"stream":true}'
-
-# List models
-curl http://localhost:8080/v1/models \
-  -H "Authorization: Bearer sk-your-key"
+  -d '{
+    "model": "precise",
+    "stream": true,
+    "messages": [
+      {"role": "user", "content": "stream a short answer"}
+    ]
+  }'
 ```
 
-### Supported Models
+### List models
 
-| Model      | Description         |
-|------------|---------------------|
-| `smart`    | Default, balanced   |
-| `creative` | Creative mode       |
-| `balanced` | Balanced mode       |
-| `precise`  | Precise mode        |
-
-## Architecture
-
-```
-┌──────────┐     OpenAI API      ┌──────────────┐     WebSocket      ┌────────────────────┐
-│  Client  │ ──── POST /v1/ ───►│   Proxy      │ ──────────────────►│  copilot.microsoft  │
-│ (curl等) │ ◄── SSE / JSON ──── │   Server     │ ◄── appendText ─── │  .com/c/api/chat    │
-└──────────┘                     └──────────────┘    done/error ───  └────────────────────┘
+```bash
+curl http://127.0.0.1:8080/v1/models \
+  -H "Authorization: Bearer sk-change-me"
 ```
 
-### Protocol Flow
+More examples:
 
-1. **Anonymous auth**: `POST https://copilot.microsoft.com/c/api/start` → get `__Host-copilot-anon` cookie + `currentConversationId`
-2. **Establish WebSocket**: `wss://copilot.microsoft.com/c/api/chat` (with cookie)
-3. **Wait for connection**: receive `{"event":"connected",...}`
-4. **Set options**: send `{"type":"setOptions","options":{...}}`
-5. **Hashcash challenge** (may occur): solve and respond
-6. **Send prompt**: `{"type":"send","text":"user prompt","conversationId":"..."}`
-7. **Stream response**: `appendText` → `partCompleted` → `done`
+- [examples/curl/chat-completions.sh](examples/curl/chat-completions.sh)
+- [examples/curl/stream.sh](examples/curl/stream.sh)
+- [examples/curl/models.sh](examples/curl/models.sh)
+- [examples/python/openai_client.py](examples/python/openai_client.py)
+- [examples/node/openai-client.mjs](examples/node/openai-client.mjs)
 
-## Project Structure
+## Deployment
 
+The repository includes a production-oriented `docker-compose.yml`:
+
+```bash
+cp .env.example .env
+docker compose up -d
+docker compose logs -f
 ```
-cmd/copilot-openai-proxy/main.go     # Entry point
-internal/
-  config/config.go                    # CLI flag configuration
-  copilot/
-    client.go                         # WebSocket client + session pool
-    errors.go                         # Upstream error types
-    protocol.go                       # WebSocket protocol message definitions
-    websocket.go                      # WebSocket helpers
-  openai/
-    handler.go                        # OpenAI API types and route handlers
-    models.go                         # Model list and health check
-    sse.go                            # SSE writer
-  server/
-    server.go                         # HTTP server and routing
-    middleware.go                      # Auth middleware
-  util/
-    id.go                             # chatcmpl- UUID generator
+
+Health endpoint:
+
+```bash
+curl http://127.0.0.1:8080/healthz
+```
+
+## Release Automation
+
+This repository ships with two GitHub Actions workflows:
+
+- `CI`: runs `go vet`, `go test -race`, `go build`, `docker build`, and `docker compose config`
+- `Release`: when you push a tag like `v0.2.0`, GitHub Actions will:
+  - build release archives for `linux`, `darwin`, and `windows`
+  - publish a GitHub Release with checksums
+  - build and push `linux/amd64` and `linux/arm64` images to `ghcr.io`
+
+Release maintainers only need:
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 ## Development
 
 ```bash
-make build    # Build binary
-make test     # Run tests
-make fmt      # Format code
-make vet      # Run go vet
-make lint     # Run golangci-lint (requires golangci-lint)
-make run      # Build & run
-make help     # Show all targets
+make fmt
+make vet
+make test
+make docker
+make compose-config
 ```
 
-## Known Issues
+Contribution guide: [CONTRIBUTING.md](CONTRIBUTING.md)
 
-**Hashcash Challenge**: Copilot recently enabled hashcash anti-abuse protection. The current implementation's response format (`{"type":"answer","answer":"<nonce>"}`) may cause an `invalid-event` error. Workaround: use the reference `copilot-openai-proxy-darwin-arm64` binary which handles this correctly.
+## Compatibility Notes
+
+- This is an unofficial Copilot proxy. Upstream protocol or anti-abuse changes may require updates in this project.
+- Tool calling and function calling are not implemented.
+- The proxy focuses on chat completions and model listing, not the full OpenAI API surface.
+
+## Project Layout
+
+```text
+cmd/copilot-openai-proxy/     CLI entrypoint
+internal/config/              configuration loading
+internal/copilot/             Copilot start/session/WebSocket logic
+internal/openai/              OpenAI-compatible handlers and SSE output
+internal/server/              HTTP server wiring and middleware
+examples/                     curl, Python, and Node usage samples
+.github/workflows/            CI and release automation
+```
 
 ## License
 
 [Apache License 2.0](LICENSE)
 
----
+## 中文使用说明
 
-## 中文说明
+这个项目把 Microsoft Copilot 的 WebSocket 补全能力转换成 OpenAI 兼容的 HTTP API，适合直接给现有 OpenAI SDK、脚本或网关接入。
 
-将 Microsoft Copilot (copilot.microsoft.com) 的 WebSocket 补全接口转换为 OpenAI 兼容的 HTTP API。
-
-### 使用方法
+### 快速启动
 
 ```bash
-# 构建
+git clone https://github.com/6Kmfi6HP/copilot-openai-proxy.git
+cd copilot-openai-proxy
 make build
+./copilot-openai-proxy -api-key sk-change-me
+```
 
-# 运行（默认监听 127.0.0.1:8080）
+或者直接使用已发布镜像：
+
+```bash
+docker run --rm -p 8080:8080 \
+  -e API_KEY=sk-change-me \
+  ghcr.io/6kmfi6hp/copilot-openai-proxy:latest
+```
+
+### 代理接入
+
+如果你的服务器必须走外部代理访问 Copilot，可以直接配置环境变量：
+
+```bash
+PROXY_URL=http://127.0.0.1:7890 \
+API_KEY=sk-change-me \
 ./copilot-openai-proxy
-
-# 带选项运行
-./copilot-openai-proxy -host 0.0.0.0 -port 9090 -api-key sk-your-key -debug
 ```
 
-### 命令行参数
+也支持标准代理变量：
 
+- `HTTP_PROXY`
+- `HTTPS_PROXY`
+- `ALL_PROXY`
+- `NO_PROXY`
+
+### Docker Compose 部署
+
+```bash
+cp .env.example .env
+docker compose up -d
 ```
--api-key string       API 密钥；设置后请求需带 Authorization header
--cleanup-interval int 会话清理间隔（秒）(default 300)
--conn-timeout int     WebSocket 连接超时（秒）(default 20)
--debug                打印原始协议日志
--host string          监听主机地址 (default "127.0.0.1")
--max-sessions int     最大内存会话数 (default 1000)
--port string          监听端口 (default "8080")
--session-ttl int      会话过期时间（秒）(default 1800)
--timeout int          请求超时（秒）(default 120)
--timezone string      发送到 Copilot 的时区 (default "Asia/Shanghai")
+
+`.env.example` 里已经包含常用部署参数和代理参数，直接填值即可。
+
+### Release 发布
+
+仓库已经配置好 GitHub Actions：
+
+- 推送 `main/master` 会自动跑 CI
+- 推送 `vX.Y.Z` tag 会自动：
+  - 编译多平台二进制
+  - 发布 GitHub Release
+  - 构建并推送 `linux/amd64` 和 `linux/arm64` Docker 镜像到 GHCR
+
+发布命令：
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
 ```
-
-### 已知问题
-
-**Hashcash 挑战**：Copilot 最近启用了 hashcash 反滥用保护。当前实现的 hashcash 答复格式可能导致 `invalid-event` 错误，需要进一步调试正确的答复格式。

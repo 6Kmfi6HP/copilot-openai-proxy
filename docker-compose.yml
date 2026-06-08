@@ -1,0 +1,29 @@
+services:
+  copilot-openai-proxy:
+    image: ${IMAGE:-ghcr.io/6kmfi6hp/copilot-openai-proxy:latest}
+    container_name: copilot-openai-proxy
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      HOST: ${HOST:-0.0.0.0}
+      PORT: 8080
+      API_KEY: ${API_KEY:-}
+      TIMEZONE: ${TIMEZONE:-UTC}
+      PROXY_URL: ${PROXY_URL:-}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      ALL_PROXY: ${ALL_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-}
+      MAX_SESSIONS: ${MAX_SESSIONS:-1000}
+      SESSION_TTL: ${SESSION_TTL:-1800}
+      CLEANUP_INTERVAL: ${CLEANUP_INTERVAL:-300}
+      CONN_TIMEOUT: ${CONN_TIMEOUT:-20}
+      TIMEOUT: ${TIMEOUT:-120}
+      DEBUG: ${DEBUG:-false}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

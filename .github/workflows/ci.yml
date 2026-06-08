@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Run tests
+        run: go test -race ./...
+
+      - name: Build binary
+        run: go build -trimpath -o copilot-openai-proxy ./cmd/copilot-openai-proxy
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare compose environment
+        run: cp .env.example .env
+
+      - name: Build image
+        run: docker build -t copilot-openai-proxy:ci .
+
+      - name: Validate docker compose
+        run: docker compose config > /dev/null

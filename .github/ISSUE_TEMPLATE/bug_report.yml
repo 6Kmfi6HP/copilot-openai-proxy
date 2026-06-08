@@ -1,0 +1,27 @@
+name: Bug report
+description: Report a reproducible problem in copilot-openai-proxy
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include curl commands, request payloads, logs, or screenshots when possible.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, architecture, deployment method, image tag, and proxy-related env vars if relevant.
+    validations:
+      required: true

@@ -3,6 +3,7 @@ package copilot
 import (
 	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/google/uuid"
 )
@@ -21,9 +22,7 @@ func buildWebSocketURL() (string, string, error) {
 }
 
 func newSendMessage(prompt, conversationID, mode string) sendMessage {
-	if mode == "" {
-		mode = "smart"
-	}
+	mode, product := protocolModeAndProduct(mode)
 	return sendMessage{
 		Event: "send",
 		Content: []sendContent{
@@ -31,7 +30,29 @@ func newSendMessage(prompt, conversationID, mode string) sendMessage {
 		},
 		ConversationID: conversationID,
 		Mode:           mode,
-		Product:        "smart",
+		Product:        product,
+	}
+}
+
+func protocolModeAndProduct(model string) (string, string) {
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "creative":
+		return "chat", "creative"
+	case "balanced":
+		return "chat", "balanced"
+	case "precise":
+		return "chat", "precise"
+	case "", "smart":
+		return "smart", "smart"
+	default:
+		return "smart", "smart"
+	}
+}
+
+func newChallengeAnswer(answer string) challengeAnswerMessage {
+	return challengeAnswerMessage{
+		Event:  "answer",
+		Answer: answer,
 	}
 }
 

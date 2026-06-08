@@ -75,7 +75,20 @@ func Test_newSendMessage_usesContentArrayAndMode_whenMarshaled(t *testing.T) {
 	}
 }
 
-func Test_newSendMessage_keepsProductSmart_whenModeVaries(t *testing.T) {
+func Test_newChallengeAnswer_usesEventField_whenMarshaled(t *testing.T) {
+	data, err := json.Marshal(newChallengeAnswer("42"))
+
+	if err != nil {
+		t.Fatalf("json.Marshal returned error: %v", err)
+	}
+
+	want := `{"event":"answer","answer":"42"}`
+	if string(data) != want {
+		t.Fatalf("challenge answer JSON = %s, want %s", data, want)
+	}
+}
+
+func Test_newSendMessage_mapsNonSmartModelsToAcceptedProtocolFields(t *testing.T) {
 	tests := []struct {
 		name string
 		mode string
@@ -84,17 +97,17 @@ func Test_newSendMessage_keepsProductSmart_whenModeVaries(t *testing.T) {
 		{
 			name: "creative mode",
 			mode: "creative",
-			want: `{"event":"send","content":[{"type":"text","text":"hello"}],"conversationId":"conv-1","mode":"creative","product":"smart"}`,
+			want: `{"event":"send","content":[{"type":"text","text":"hello"}],"conversationId":"conv-1","mode":"chat","product":"creative"}`,
 		},
 		{
 			name: "balanced mode",
 			mode: "balanced",
-			want: `{"event":"send","content":[{"type":"text","text":"hello"}],"conversationId":"conv-1","mode":"balanced","product":"smart"}`,
+			want: `{"event":"send","content":[{"type":"text","text":"hello"}],"conversationId":"conv-1","mode":"chat","product":"balanced"}`,
 		},
 		{
 			name: "precise mode",
 			mode: "precise",
-			want: `{"event":"send","content":[{"type":"text","text":"hello"}],"conversationId":"conv-1","mode":"precise","product":"smart"}`,
+			want: `{"event":"send","content":[{"type":"text","text":"hello"}],"conversationId":"conv-1","mode":"chat","product":"precise"}`,
 		},
 	}
 
@@ -107,6 +120,33 @@ func Test_newSendMessage_keepsProductSmart_whenModeVaries(t *testing.T) {
 			}
 			if string(data) != tt.want {
 				t.Fatalf("send message JSON = %s, want %s", data, tt.want)
+			}
+		})
+	}
+}
+
+func Test_protocolModeAndProduct_mapsPublicModelsToCopilotFields(t *testing.T) {
+	tests := []struct {
+		name        string
+		model       string
+		wantMode    string
+		wantProduct string
+	}{
+		{name: "empty defaults to smart", model: "", wantMode: "smart", wantProduct: "smart"},
+		{name: "smart stays smart", model: "smart", wantMode: "smart", wantProduct: "smart"},
+		{name: "creative uses chat product creative", model: "creative", wantMode: "chat", wantProduct: "creative"},
+		{name: "balanced uses chat product balanced", model: "balanced", wantMode: "chat", wantProduct: "balanced"},
+		{name: "precise uses chat product precise", model: "precise", wantMode: "chat", wantProduct: "precise"},
+		{name: "normalizes case and whitespace", model: " Precise ", wantMode: "chat", wantProduct: "precise"},
+		{name: "unknown falls back to smart", model: "gpt-4", wantMode: "smart", wantProduct: "smart"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotMode, gotProduct := protocolModeAndProduct(tt.model)
+
+			if gotMode != tt.wantMode || gotProduct != tt.wantProduct {
+				t.Fatalf("protocolModeAndProduct(%q) = (%q, %q), want (%q, %q)", tt.model, gotMode, gotProduct, tt.wantMode, tt.wantProduct)
 			}
 		})
 	}

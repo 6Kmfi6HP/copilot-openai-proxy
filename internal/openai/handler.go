@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,12 +16,17 @@ import (
 
 // Handler implements the OpenAI-compatible API.
 type Handler struct {
-	client *copilot.Client
+	client chatClient
 }
 
 // NewHandler creates a new OpenAI API handler backed by the given Copilot client.
 func NewHandler(client *copilot.Client) *Handler {
 	return &Handler{client: client}
+}
+
+type chatClient interface {
+	Complete(rctx context.Context, input copilot.CompletionInput) (string, string, error)
+	StreamEvents(rctx context.Context, input copilot.CompletionInput) (<-chan copilot.StreamEvent, error)
 }
 
 // ChatCompletions handles POST /v1/chat/completions.
@@ -43,7 +49,8 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mode := modeForModel(req.Model)
+	selectedModel := normalizeModel(req.Model)
+	mode := modeForModel(selectedModel)
 
 	// tools/function calling is not supported.
 	if req.Tools != nil || req.ToolChoice != nil || req.FunctionCall != nil {
@@ -58,7 +65,7 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		Prompt:      prompt,
 		Mode:        mode,
 		Stream:      req.Stream,
-		StreamModel: req.Model, // echo back the user's model name
+		StreamModel: selectedModel,
 	}
 
 	if req.Stream {
@@ -121,8 +128,23 @@ func messageContentText(content interface{}) string {
 	}
 }
 
-func modeForModel(_ string) string {
-	return "smart"
+func normalizeModel(model string) string {
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "", "smart":
+		return "smart"
+	case "creative":
+		return "creative"
+	case "balanced":
+		return "balanced"
+	case "precise":
+		return "precise"
+	default:
+		return "smart"
+	}
+}
+
+func modeForModel(model string) string {
+	return normalizeModel(model)
 }
 
 // fullResponse handles a non-streaming completion request.
@@ -323,6 +345,3 @@ type ErrorObject struct {
 	Param   *string `json:"param"`
 	Code    *string `json:"code"`
 }
-
-// StreamModel is not used by Copilot — all requests go to "smart" mode.
-// This field is populated from the request model for response transparency.

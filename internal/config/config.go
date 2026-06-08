@@ -3,6 +3,7 @@ package config
 import (
 	"flag"
 	"os"
+	"strconv"
 )
 
 // Config holds the application configuration.
@@ -11,11 +12,12 @@ type Config struct {
 	APIKey          string // optional bearer token for client auth
 	MaxSessions     int    // max concurrent Copilot WebSocket sessions
 	SessionTTL      int    // session idle TTL in seconds
-	CleanupInterval int   // session cleanup interval in seconds
-	ConnTimeout     int   // WebSocket connection timeout in seconds
+	CleanupInterval int    // session cleanup interval in seconds
+	ConnTimeout     int    // WebSocket connection timeout in seconds
 	Timeout         int    // request timeout in seconds
 	Debug           bool   // print raw protocol logs
 	TimeZone        string // timezone sent to Copilot start endpoint
+	ProxyURL        string // optional outbound proxy URL for Copilot traffic
 }
 
 // Load reads configuration from flags / environment.
@@ -23,13 +25,14 @@ func Load() *Config {
 	cfg := &Config{}
 	flag.StringVar(&cfg.Addr, "host", envOr("HOST", "127.0.0.1"), "listen host")
 	flag.StringVar(&cfg.APIKey, "api-key", envOr("API_KEY", ""), "API key; when set, requests require Authorization header")
-	flag.IntVar(&cfg.MaxSessions, "max-sessions", 1000, "max in-memory sessions")
-	flag.IntVar(&cfg.SessionTTL, "session-ttl", 1800, "session expiry in seconds")
-	flag.IntVar(&cfg.CleanupInterval, "cleanup-interval", 300, "session cleanup interval in seconds")
-	flag.IntVar(&cfg.ConnTimeout, "conn-timeout", 20, "WebSocket connection timeout in seconds")
-	flag.IntVar(&cfg.Timeout, "timeout", 120, "request timeout in seconds")
-	flag.BoolVar(&cfg.Debug, "debug", false, "print raw protocol logs")
+	flag.IntVar(&cfg.MaxSessions, "max-sessions", envOrInt("MAX_SESSIONS", 1000), "max in-memory sessions")
+	flag.IntVar(&cfg.SessionTTL, "session-ttl", envOrInt("SESSION_TTL", 1800), "session expiry in seconds")
+	flag.IntVar(&cfg.CleanupInterval, "cleanup-interval", envOrInt("CLEANUP_INTERVAL", 300), "session cleanup interval in seconds")
+	flag.IntVar(&cfg.ConnTimeout, "conn-timeout", envOrInt("CONN_TIMEOUT", 20), "WebSocket connection timeout in seconds")
+	flag.IntVar(&cfg.Timeout, "timeout", envOrInt("TIMEOUT", 120), "request timeout in seconds")
+	flag.BoolVar(&cfg.Debug, "debug", envOrBool("DEBUG", false), "print raw protocol logs")
 	flag.StringVar(&cfg.TimeZone, "timezone", envOr("TIMEZONE", "Asia/Shanghai"), "timezone sent to Copilot start endpoint")
+	flag.StringVar(&cfg.ProxyURL, "proxy-url", envOr("PROXY_URL", ""), "outbound proxy URL for Copilot HTTP/WebSocket traffic")
 
 	// Parse -port separately so it merges with -host.
 	port := flag.String("port", envOr("PORT", "8080"), "listen port")
@@ -44,4 +47,30 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func envOrInt(key string, fallback int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+
+	parsed, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func envOrBool(key string, fallback bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+
+	parsed, err := strconv.ParseBool(v)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }

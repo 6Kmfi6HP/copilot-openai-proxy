@@ -1,22 +1,30 @@
-# Builder
-FROM golang:1.26-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
 
-WORKDIR /app
+ARG TARGETOS
+ARG TARGETARCH
 
-# Cache dependencies
+WORKDIR /src
+
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Build
-COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /copilot-openai-proxy ./cmd/copilot-openai-proxy
+COPY cmd ./cmd
+COPY internal ./internal
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -trimpath -ldflags="-s -w" -o /out/copilot-openai-proxy ./cmd/copilot-openai-proxy
 
-# Runtime
 FROM alpine:3.21
 
-RUN apk --no-cache add ca-certificates
+RUN apk --no-cache add ca-certificates tzdata && \
+    addgroup -S app && \
+    adduser -S -G app app
 
-COPY --from=builder /copilot-openai-proxy /usr/local/bin/copilot-openai-proxy
+ENV HOST=0.0.0.0
+ENV PORT=8080
+ENV TIMEZONE=UTC
+
+COPY --from=builder /out/copilot-openai-proxy /usr/local/bin/copilot-openai-proxy
+
+USER app
 
 EXPOSE 8080
 

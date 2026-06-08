@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
@@ -25,6 +26,7 @@ func main() {
 		time.Duration(cfg.Timeout)*time.Second,
 		cfg.Debug,
 		cfg.TimeZone,
+		cfg.ProxyURL,
 	)
 	if err != nil {
 		log.Fatalf("failed to create copilot client: %v", err)
@@ -46,4 +48,11 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	log.Println("shutting down...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Printf("server shutdown failed: %v", err)
+	}
 }

@@ -1,4 +1,4 @@
-.PHONY: build run test clean lint docker fmt vet help
+.PHONY: build run test clean lint docker docker-run fmt vet compose-config help
 
 BINARY   := copilot-openai-proxy
 CMD      := ./cmd/copilot-openai-proxy
@@ -35,3 +35,6 @@ docker: ## Build Docker image
 
 docker-run: docker ## Run in Docker
 	docker run --rm -p 8080:8080 $(BINARY)
+
+compose-config: ## Validate docker compose configuration
+	docker compose config
