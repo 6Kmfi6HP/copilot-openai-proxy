@@ -19,7 +19,7 @@ This project is useful when you want to point OpenAI SDKs, curl scripts, or exis
 - Optional bearer-token protection
 - Multi-arch Docker image publishing to GHCR
 - GitHub Releases with prebuilt binaries
-- Docker Compose deployment template
+- Docker Compose, Docker Swarm, and K3s deployment examples
 - Outbound proxy support through environment variables
 
 ## Quick Start
@@ -87,11 +87,17 @@ The proxy supports two ways to route outbound Copilot traffic:
 1. Set `PROXY_URL` when you want to force a specific upstream proxy for both the Copilot HTTP start request and the WebSocket connection.
 2. Use standard Go proxy environment variables such as `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and `NO_PROXY`.
 
+If you want to set a proxy IP directly, use a full proxy URL instead of a bare IP. Example:
+
+```bash
+PROXY_URL=http://192.168.1.10:7890
+```
+
 Example:
 
 ```bash
 API_KEY=sk-change-me \
-PROXY_URL=http://127.0.0.1:7890 \
+PROXY_URL=http://192.168.1.10:7890 \
 ./copilot-openai-proxy -host 0.0.0.0 -port 8080
 ```
 
@@ -143,7 +149,13 @@ More examples:
 
 ## Deployment
 
-The repository includes a production-oriented `docker-compose.yml`:
+The repository includes three deployment formats:
+
+- `docker-compose.yml`: root-level quick-start Compose file
+- `deploy/swarm/docker-stack.yml`: single-manager Docker Swarm stack example
+- `deploy/k3s/`: single-node K3s manifests
+
+### Docker Compose
 
 ```bash
 cp .env.example .env
@@ -151,7 +163,45 @@ docker compose up -d
 docker compose logs -f
 ```
 
-Health endpoint:
+Compose-specific example files are also available in `deploy/compose/`.
+
+### Docker Swarm
+
+Single-node Swarm deployment:
+
+```bash
+docker swarm init
+cp deploy/swarm/.env.example deploy/swarm/.env
+set -a
+source deploy/swarm/.env
+set +a
+docker stack deploy -c deploy/swarm/docker-stack.yml copilot
+docker service ls
+```
+
+The stack example pins the service to the manager node and runs a single replica.
+
+### K3s
+
+Single-node K3s deployment:
+
+```bash
+curl -sfL https://get.k3s.io | sh -
+sudo k3s kubectl apply -k deploy/k3s
+sudo k3s kubectl -n copilot-openai-proxy get pods,svc
+```
+
+Before applying, edit `deploy/k3s/configmap.yaml` and `deploy/k3s/secret.example.yaml` to set `API_KEY` and the proxy fields you need.
+
+After deployment on a single-node K3s cluster, the service is exposed through `NodePort 30080` by default:
+
+```bash
+curl http://<node-ip>:30080/healthz
+```
+
+### Health Check
+
+All deployment formats expose the same health endpoint:
 
 ```bash
 curl http://127.0.0.1:8080/healthz
@@ -202,6 +252,7 @@ internal/openai/              OpenAI-compatible handlers and SSE output
 internal/server/              HTTP server wiring and middleware
 examples/                     curl, Python, and Node usage samples
 .github/workflows/            CI and release automation
+deploy/                       compose, swarm, and k3s deployment files
 ```
 
 ## License
@@ -234,9 +285,15 @@ docker run --rm -p 8080:8080 \
 如果你的服务器必须走外部代理访问 Copilot，可以直接配置环境变量：
 
 ```bash
-PROXY_URL=http://127.0.0.1:7890 \
+PROXY_URL=http://192.168.1.10:7890 \
 API_KEY=sk-change-me \
 ./copilot-openai-proxy
+```
+
+也就是说，项目支持设置代理 IP，但要写成完整 URL，而不是只写裸 IP。例如：
+
+```bash
+PROXY_URL=http://192.168.1.10:7890
 ```
 
 也支持标准代理变量：
@@ -254,6 +311,41 @@ docker compose up -d
 ```
 
 `.env.example` 里已经包含常用部署参数和代理参数，直接填值即可。
+
+另外仓库还提供了两套单机部署示例：
+
+### Docker Swarm 单机部署
+
+```bash
+docker swarm init
+cp deploy/swarm/.env.example deploy/swarm/.env
+set -a
+source deploy/swarm/.env
+set +a
+docker stack deploy -c deploy/swarm/docker-stack.yml copilot
+docker service ls
+```
+
+### K3s 单机部署
+
+```bash
+curl -sfL https://get.k3s.io | sh -
+sudo k3s kubectl apply -k deploy/k3s
+sudo k3s kubectl -n copilot-openai-proxy get pods,svc
+```
+
+部署前请先修改：
+
+- `deploy/k3s/configmap.yaml`
+- `deploy/k3s/secret.example.yaml`
+
+这里面已经预留了 `PROXY_URL`、`HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 等参数。
+
+默认通过单机节点的 `30080` 端口访问：
+
+```bash
+curl http://<节点IP>:30080/healthz
+```
 
 ### Release 发布
 

@@ -1,0 +1,52 @@
+services:
+  copilot-openai-proxy:
+    image: ${IMAGE:-ghcr.io/6kmfi6hp/copilot-openai-proxy:latest}
+    ports:
+      - target: 8080
+        published: ${PUBLISHED_PORT:-8080}
+        protocol: tcp
+        mode: ingress
+    environment:
+      HOST: ${HOST:-0.0.0.0}
+      PORT: 8080
+      API_KEY: ${API_KEY:-}
+      TIMEZONE: ${TIMEZONE:-UTC}
+      PROXY_URL: ${PROXY_URL:-}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      ALL_PROXY: ${ALL_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-}
+      MAX_SESSIONS: ${MAX_SESSIONS:-1000}
+      SESSION_TTL: ${SESSION_TTL:-1800}
+      CLEANUP_INTERVAL: ${CLEANUP_INTERVAL:-300}
+      CONN_TIMEOUT: ${CONN_TIMEOUT:-20}
+      TIMEOUT: ${TIMEOUT:-120}
+      DEBUG: ${DEBUG:-false}
+    networks:
+      - proxy
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      update_config:
+        order: start-first
+      rollback_config:
+        order: stop-first
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+
+networks:
+  proxy:
+    driver: overlay
+    attachable: true

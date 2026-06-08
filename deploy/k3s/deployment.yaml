@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: copilot-openai-proxy
+  namespace: copilot-openai-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: copilot-openai-proxy
+  template:
+    metadata:
+      labels:
+        app: copilot-openai-proxy
+    spec:
+      containers:
+        - name: copilot-openai-proxy
+          image: ghcr.io/6kmfi6hp/copilot-openai-proxy:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http
+          envFrom:
+            - configMapRef:
+                name: copilot-openai-proxy-config
+            - secretRef:
+                name: copilot-openai-proxy-secret
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi

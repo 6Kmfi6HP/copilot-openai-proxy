@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: copilot-openai-proxy-config
+  namespace: copilot-openai-proxy
+data:
+  HOST: "0.0.0.0"
+  PORT: "8080"
+  TIMEZONE: "UTC"
+  PROXY_URL: "http://192.168.1.10:7890"
+  HTTP_PROXY: ""
+  HTTPS_PROXY: ""
+  ALL_PROXY: ""
+  NO_PROXY: "127.0.0.1,localhost,10.43.0.0/16"
+  MAX_SESSIONS: "1000"
+  SESSION_TTL: "1800"
+  CLEANUP_INTERVAL: "300"
+  CONN_TIMEOUT: "20"
+  TIMEOUT: "120"
+  DEBUG: "false"
