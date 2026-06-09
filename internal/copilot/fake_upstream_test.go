@@ -1,13 +1,9 @@
 package copilot
 
 import (
-	"context"
-	"crypto/tls"
 	"encoding/json"
-	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"sync"
 	"testing"
 	"time"
@@ -16,13 +12,13 @@ import (
 )
 
 type fakeCopilotScenario struct {
-	conversationID string
-	messageID      string
-	appendTexts    []string
-	expectSend     bool
-	startDelay     time.Duration
-	holdChatOpen   bool
-	idleCloseAfter time.Duration
+	conversationID       string
+	messageID            string
+	appendTexts          []string
+	expectSend           bool
+	startDelay           time.Duration
+	holdChatOpen         bool
+	idleCloseAfter       time.Duration
 	closeBeforeSendCount int
 }
 
@@ -92,28 +88,7 @@ func (f *fakeCopilotUpstream) newClient(t *testing.T) *Client {
 func (f *fakeCopilotUpstream) newClientWithConfig(t *testing.T, cfg ClientConfig) *Client {
 	t.Helper()
 
-	client, err := NewClient(cfg)
-	if err != nil {
-		t.Fatalf("NewClient() error = %v", err)
-	}
-
-	baseURL, err := url.Parse(f.server.URL)
-	if err != nil {
-		t.Fatalf("url.Parse(%q) error = %v", f.server.URL, err)
-	}
-
-	client.http.Transport = rewriteRoundTripper{
-		target: baseURL,
-		base:   f.server.Client().Transport,
-	}
-	client.wsDialer.Proxy = nil
-	client.wsDialer.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	client.wsDialer.NetDialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
-		var dialer net.Dialer
-		return dialer.DialContext(ctx, network, f.server.Listener.Addr().String())
-	}
-
-	return client
+	return newClientForTestServer(t, f.server, cfg)
 }
 
 func (f *fakeCopilotUpstream) lastStartRequest() startRequestBody {
@@ -206,7 +181,11 @@ func (f *fakeCopilotUpstream) handleStart(w http.ResponseWriter, r *http.Request
 }
 
 func (f *fakeCopilotUpstream) handleChat(w http.ResponseWriter, r *http.Request) {
-	upgrader := websocket.Upgrader{}
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			return true
+		},
+	}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		f.t.Fatalf("Upgrade() error = %v", err)
@@ -312,18 +291,4 @@ func (f *fakeCopilotUpstream) readSendMessage(conn *websocket.Conn) bool {
 		close(f.sendObserved)
 	})
 	return true
-}
-
-type rewriteRoundTripper struct {
-	target *url.URL
-	base   http.RoundTripper
-}
-
-func (r rewriteRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	clone := req.Clone(req.Context())
-	rewritten := *clone.URL
-	rewritten.Scheme = r.target.Scheme
-	rewritten.Host = r.target.Host
-	clone.URL = &rewritten
-	return r.base.RoundTrip(clone)
 }

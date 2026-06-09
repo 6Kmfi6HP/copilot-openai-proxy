@@ -27,7 +27,7 @@ type startResponse struct {
 	IsBlocked             bool   `json:"isBlocked"`
 }
 
-func (c *Client) startAnon(ctx context.Context) (*SessionState, error) {
+func (c *Client) startAnonOnce(ctx context.Context) (*SessionState, error) {
 	cookies, convID, err := c.acquireAnonCookies(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("copilot start: %w", err)
@@ -47,9 +47,10 @@ func (c *Client) startAnon(ctx context.Context) (*SessionState, error) {
 	header.Set("Origin", copilotOrigin)
 	header.Set("Cookie", collectCookies(cookies))
 
-	conn, _, err := c.wsDialer.DialContext(ctx, wsURL, header)
+	conn, resp, err := c.wsDialer.DialContext(ctx, wsURL, header)
 	if err != nil {
-		return nil, fmt.Errorf("copilot websocket dial: %w", err)
+		closeResponseBody(resp)
+		return nil, newRetryableSessionStartError("copilot websocket dial", err)
 	}
 
 	session := &SessionState{
@@ -63,12 +64,12 @@ func (c *Client) startAnon(ctx context.Context) (*SessionState, error) {
 	session.setConnected(true)
 
 	if err := c.waitForConnected(ctx, conn); err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("copilot wait connected: %w", err)
+		closeSessionConn(conn)
+		return nil, newRetryableSessionStartError("copilot wait connected", err)
 	}
 	if err := sendEvent(conn, defaultSetOptions()); err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("copilot setOptions: %w", err)
+		closeSessionConn(conn)
+		return nil, newRetryableSessionStartError("copilot setOptions", err)
 	}
 
 	return session, nil
@@ -98,7 +99,7 @@ func (c *Client) acquireAnonCookies(ctx context.Context) ([]*http.Cookie, string
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, "", fmt.Errorf("copilot start: %w", err)
+		return nil, "", newRetryableSessionStartError("request", err)
 	}
 	defer resp.Body.Close()
 
@@ -107,12 +108,16 @@ func (c *Client) acquireAnonCookies(ctx context.Context) ([]*http.Cookie, string
 		return nil, "", fmt.Errorf("read copilot start response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
+		message := fmt.Sprintf("copilot start returned %d: %s", resp.StatusCode, string(respBody))
+		if isRetryableStartStatus(resp.StatusCode) {
+			return nil, "", newRetryableSessionStartMessage(message)
+		}
 		return nil, "", fmt.Errorf("copilot start returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	var startResp startResponse
 	if err := json.Unmarshal(respBody, &startResp); err != nil {
-		return nil, "", fmt.Errorf("parse copilot start response: %w", err)
+		return nil, "", newRetryableSessionStartError("parse copilot start response", err)
 	}
 	if startResp.IsBlocked {
 		return nil, "", fmt.Errorf("copilot start reports anonymous user is blocked; websocket may not produce completions")
