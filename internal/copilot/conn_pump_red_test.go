@@ -253,6 +253,73 @@ func TestConnPump_StopsOnPeerClose(t *testing.T) {
 	}
 }
 
+func TestConnPump_RefreshesReadDeadlineOnPong(t *testing.T) {
+	t.Parallel()
+
+	serverErrCh := make(chan error, 1)
+	upgrader := websocket.Upgrader{}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			serverErrCh <- err
+			return
+		}
+		defer conn.Close()
+
+		time.Sleep(60 * time.Millisecond)
+		if err := conn.WriteControl(websocket.PongMessage, nil, time.Now().Add(time.Second)); err != nil {
+			serverErrCh <- err
+			return
+		}
+
+		time.Sleep(80 * time.Millisecond)
+		if err := conn.WriteControl(
+			websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+			time.Now().Add(time.Second),
+		); err != nil {
+			serverErrCh <- err
+		}
+	}))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("websocket.DefaultDialer.Dial() error = %v", err)
+	}
+	defer clientConn.Close()
+
+	pump := newConnPump(context.Background(), clientConn, false)
+	pump.readTimeout = 120 * time.Millisecond
+
+	events := make(chan StreamEvent, 2)
+	done := make(chan struct{})
+	go func() {
+		defer close(events)
+		pump.run(events)
+		close(done)
+	}()
+
+	select {
+	case evt := <-events:
+		if evt.Type != EventDone {
+			t.Fatalf("event type = %v, want %v after pong-refreshed deadline", evt.Type, EventDone)
+		}
+	case err := <-serverErrCh:
+		t.Fatalf("websocket test server failed: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for pong-refreshed close")
+	}
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for conn pump goroutine to exit")
+	}
+}
+
 func waitForRawMessage(t *testing.T, outbound <-chan []byte, serverErrCh <-chan error) []byte {
 	t.Helper()
 

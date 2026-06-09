@@ -134,6 +134,42 @@ func TestClientIntegration_StartDelayHonorsContextDeadline(t *testing.T) {
 	}
 }
 
+func TestComplete_HonorsRequestContextCancellation(t *testing.T) {
+	t.Parallel()
+
+	upstream := newFakeCopilotUpstream(t, fakeCopilotScenario{
+		conversationID: "conv-cancel",
+		messageID:      "msg-cancel",
+		expectSend:     true,
+		holdChatOpen:   true,
+	})
+
+	client := upstream.newClient(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+
+	go func() {
+		_, _, err := client.Complete(ctx, CompletionInput{
+			Prompt: "block until canceled",
+			Mode:   "smart",
+		})
+		errCh <- err
+	}()
+
+	upstream.waitForSendObserved(t)
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Complete() error = %v, want %v", err, context.Canceled)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for Complete() cancellation")
+	}
+}
+
 func collectStreamEvents(t *testing.T, events <-chan StreamEvent) []StreamEvent {
 	t.Helper()
 

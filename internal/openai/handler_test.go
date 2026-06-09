@@ -379,6 +379,30 @@ func TestChatCompletions_StreamStartupReturnsMappedErrorResponses(t *testing.T) 
 	}
 }
 
+func TestChatCompletions_StreamOverloadSurface(t *testing.T) {
+	fake := &fakeChatClient{streamErr: copilot.NewCapacityError("session capacity exhausted", context.DeadlineExceeded)}
+	handler := &Handler{client: fake}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{"stream":true,"messages":[{"role":"user","content":"hello"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.ChatCompletions(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("content type = %q, want %q", got, "application/json")
+	}
+	if got := rec.Header().Get("Retry-After"); got != "1" {
+		t.Fatalf("Retry-After = %q, want %q", got, "1")
+	}
+	if strings.Contains(rec.Body.String(), "data: ") {
+		t.Fatalf("body unexpectedly contains SSE frames: %s", rec.Body.String())
+	}
+}
+
 func TestStreamResponse_StopsCleanlyOnClientCancel(t *testing.T) {
 	started := make(chan struct{})
 	fake := &fakeChatClient{

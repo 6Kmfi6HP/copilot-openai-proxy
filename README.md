@@ -86,6 +86,16 @@ Flags and environment variables can be mixed. Command-line flags take precedence
 
 `WARM_SESSIONS` is capped at `MAX_SESSIONS`. `TIMEOUT` is used as the default session acquire/start budget when the incoming HTTP request does not already carry a deadline.
 
+## Concurrency Semantics
+
+- `WarmSessions` keeps a bounded pool of idle prewarmed sessions and is capped by `MaxSessions`.
+- `WSReadTimeout` and `WSPingInterval` work together so dead peers are detected by read deadlines refreshed on pong frames.
+- `WSWriteTimeout` bounds prompt sends, ping writes, and challenge replies on the single WebSocket writer goroutine.
+- `SessionTTL` and `CleanupInterval` apply only to idle pooled sessions. Active leased sessions are not evicted by the janitor.
+- When the proxy cannot acquire session capacity in time, it returns HTTP `503` with `Retry-After: 1`.
+- When upstream start/send/read work exceeds its timeout budget, it returns HTTP `504`.
+- During process shutdown, the proxy stops warm-pool refills, closes idle sessions immediately, and waits for leased sessions to drain within the shutdown context budget.
+
 ### Proxy Support
 
 The proxy supports two ways to route outbound Copilot traffic:

@@ -57,12 +57,12 @@ func (c *Client) startAnon(ctx context.Context) (*SessionState, error) {
 		ConversationID:  convID,
 		ClientSessionID: clientSessionID,
 		Cookies:         cookies,
-		Connected:       true,
 		CreatedAt:       time.Now(),
 		LastUsedAt:      time.Now(),
 	}
+	session.setConnected(true)
 
-	if err := c.waitForConnected(conn); err != nil {
+	if err := c.waitForConnected(ctx, conn); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("copilot wait connected: %w", err)
 	}

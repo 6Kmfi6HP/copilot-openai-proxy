@@ -61,4 +61,7 @@ func main() {
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Printf("server shutdown failed: %v", err)
 	}
+	if err := client.Close(ctx); err != nil {
+		log.Printf("copilot client shutdown failed: %v", err)
+	}
 }

@@ -25,8 +25,8 @@ func TestGetOrCreateSession_returnsConnectedSession_whenStartSucceeds(t *testing
 	if session.ConversationID != "conv-baseline" {
 		t.Fatalf("conversationID = %q, want %q", session.ConversationID, "conv-baseline")
 	}
-	if !session.Connected {
-		t.Fatal("session.Connected = false, want true")
+	if !session.IsConnected() {
+		t.Fatal("session.IsConnected() = false, want true")
 	}
 	if session.Conn == nil {
 		t.Fatal("session.Conn = nil, want websocket connection")

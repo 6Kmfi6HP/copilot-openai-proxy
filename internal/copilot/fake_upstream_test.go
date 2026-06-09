@@ -21,6 +21,7 @@ type fakeCopilotScenario struct {
 	appendTexts    []string
 	expectSend     bool
 	startDelay     time.Duration
+	holdChatOpen   bool
 }
 
 type fakeCopilotUpstream struct {
@@ -32,6 +33,8 @@ type fakeCopilotUpstream struct {
 	startRequests  []startRequestBody
 	outboundEvents []string
 	lastSend       sendMessage
+	sendObserved   chan struct{}
+	sendOnce       sync.Once
 }
 
 func newFakeCopilotUpstream(t *testing.T, scenario fakeCopilotScenario) *fakeCopilotUpstream {
@@ -44,7 +47,11 @@ func newFakeCopilotUpstream(t *testing.T, scenario fakeCopilotScenario) *fakeCop
 		scenario.messageID = "msg-test"
 	}
 
-	upstream := &fakeCopilotUpstream{t: t, scenario: scenario}
+	upstream := &fakeCopilotUpstream{
+		t:            t,
+		scenario:     scenario,
+		sendObserved: make(chan struct{}),
+	}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/c/api/start":
@@ -133,6 +140,16 @@ func (f *fakeCopilotUpstream) lastSendMessage() sendMessage {
 	return f.lastSend
 }
 
+func (f *fakeCopilotUpstream) waitForSendObserved(t *testing.T) {
+	t.Helper()
+
+	select {
+	case <-f.sendObserved:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for fake upstream send event")
+	}
+}
+
 func (f *fakeCopilotUpstream) handleStart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "only POST is supported", http.StatusMethodNotAllowed)
@@ -197,6 +214,10 @@ func (f *fakeCopilotUpstream) handleChat(w http.ResponseWriter, r *http.Request)
 	}
 
 	f.readSendMessage(conn)
+	if f.scenario.holdChatOpen {
+		<-r.Context().Done()
+		return
+	}
 
 	if err := conn.WriteJSON(serverEnvelope{
 		Event:          "startMessage",
@@ -251,6 +272,9 @@ func (f *fakeCopilotUpstream) readSendMessage(conn *websocket.Conn) {
 	f.outboundEvents = append(f.outboundEvents, msg.Event)
 	f.lastSend = msg
 	f.mu.Unlock()
+	f.sendOnce.Do(func() {
+		close(f.sendObserved)
+	})
 }
 
 type rewriteRoundTripper struct {

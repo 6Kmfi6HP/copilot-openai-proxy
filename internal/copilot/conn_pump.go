@@ -44,6 +44,13 @@ func (p *connPump) run(events chan<- StreamEvent) {
 	p.configureReadDeadline()
 	writerDone := make(chan struct{})
 	go p.writeLoop(writerDone)
+	go func() {
+		select {
+		case <-p.ctx.Done():
+			p.close()
+		case <-p.closeCh:
+		}
+	}()
 
 	p.readLoop(events)
 	p.close()
@@ -87,6 +94,10 @@ func (p *connPump) readLoop(events chan<- StreamEvent) {
 	for {
 		_, msg, err := p.conn.ReadMessage()
 		if err != nil {
+			if ctxErr := p.ctx.Err(); ctxErr != nil {
+				events <- StreamEvent{Type: EventError, Err: ctxErr}
+				return
+			}
 			if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
 				events <- StreamEvent{Type: EventDone}
 				return

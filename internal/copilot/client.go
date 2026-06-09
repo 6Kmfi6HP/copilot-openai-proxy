@@ -53,6 +53,8 @@ type Client struct {
 	timeZone       string // timezone sent in start request body
 	startURL       string
 	wsURL          string
+	janitorCancel  context.CancelFunc
+	janitorDone    chan struct{}
 }
 
 // NewClient creates a Copilot client that obtains anonymous cookies
@@ -103,6 +105,7 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	}
 	httpTransport.Proxy = proxyFunc
 	c.sessionMgr = newSessionManagerWithWarmPool(cfg.MaxSessions, cfg.WarmSessions, c.startAnon)
+	c.startJanitor()
 	return c, nil
 }
 
@@ -134,19 +137,28 @@ func (c *Client) Complete(ctx context.Context, input CompletionInput) (string, s
 	// Collect until done.
 	var b strings.Builder
 	var messageID string
-	for evt := range events {
-		switch evt.Type {
-		case EventAppendText:
-			b.WriteString(evt.Text)
-		case EventStartMessage:
-			messageID = evt.MessageID
-		case EventError:
-			return b.String(), messageID, evt.Err
-		case EventDone:
-			return b.String(), messageID, nil
+	for {
+		select {
+		case <-ctx.Done():
+			c.InvalidateSession(session.ConversationID)
+			return b.String(), messageID, ctx.Err()
+		case evt, ok := <-events:
+			if !ok {
+				return b.String(), messageID, nil
+			}
+
+			switch evt.Type {
+			case EventAppendText:
+				b.WriteString(evt.Text)
+			case EventStartMessage:
+				messageID = evt.MessageID
+			case EventError:
+				return b.String(), messageID, evt.Err
+			case EventDone:
+				return b.String(), messageID, nil
+			}
 		}
 	}
-	return b.String(), messageID, nil
 }
 
 // StreamEvents returns a channel of StreamEvent for SSE streaming.
@@ -172,14 +184,31 @@ func (c *Client) StreamEvents(ctx context.Context, input CompletionInput) (<-cha
 	return events, nil
 }
 
-func (c *Client) waitForConnected(conn *websocket.Conn) error {
-	if c.timeout > 0 {
-		_ = conn.SetReadDeadline(time.Now().Add(c.timeout))
+func (c *Client) waitForConnected(ctx context.Context, conn *websocket.Conn) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	stop := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-stop:
+		}
+	}()
+	defer close(stop)
+
+	if deadline := c.connectedReadDeadline(ctx); !deadline.IsZero() {
+		_ = conn.SetReadDeadline(deadline)
 		defer conn.SetReadDeadline(time.Time{})
 	}
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
 			return fmt.Errorf("copilot websocket read failed: %w", err)
 		}
 		var env serverEnvelope
@@ -202,11 +231,24 @@ func (c *Client) waitForConnected(conn *websocket.Conn) error {
 	}
 }
 
+func (c *Client) connectedReadDeadline(ctx context.Context) time.Time {
+	deadline := time.Time{}
+	if c.timeout > 0 {
+		deadline = time.Now().Add(c.timeout)
+	}
+	if ctx != nil {
+		if ctxDeadline, ok := ctx.Deadline(); ok && (deadline.IsZero() || ctxDeadline.Before(deadline)) {
+			deadline = ctxDeadline
+		}
+	}
+	return deadline
+}
+
 // ---------- Event loop ----------
 
 func (c *Client) readLoop(session *SessionState, events chan<- StreamEvent) {
 	defer func() {
-		session.Connected = false
+		session.setConnected(false)
 	}()
 	c.newConnPump(context.Background(), session.Conn).run(events)
 }

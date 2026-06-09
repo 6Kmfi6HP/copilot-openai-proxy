@@ -17,7 +17,9 @@ func TestSessionManager_AcquireRunsStartOutsideRegistryLock(t *testing.T) {
 	manager := newSessionManager(8, func(ctx context.Context) (*SessionState, error) {
 		close(started)
 		<-releaseStart
-		return &SessionState{ConversationID: "conv-lock", Connected: true}, nil
+		session := &SessionState{ConversationID: "conv-lock"}
+		session.setConnected(true)
+		return session, nil
 	})
 
 	errCh := make(chan error, 1)
@@ -60,7 +62,9 @@ func TestSessionManager_LeaseStateTransitions(t *testing.T) {
 	t.Parallel()
 
 	manager := newSessionManager(8, func(ctx context.Context) (*SessionState, error) {
-		return &SessionState{ConversationID: "conv-lease", Connected: true}, nil
+		session := &SessionState{ConversationID: "conv-lease"}
+		session.setConnected(true)
+		return session, nil
 	})
 
 	lease, err := manager.acquire(context.Background())
@@ -89,10 +93,9 @@ func TestSessionManager_RetiresUsedConversationBeforeReuse(t *testing.T) {
 	nextID := 0
 	manager := newSessionManager(1, func(ctx context.Context) (*SessionState, error) {
 		nextID++
-		return &SessionState{
-			ConversationID: fmt.Sprintf("conv-%d", nextID),
-			Connected:      true,
-		}, nil
+		session := &SessionState{ConversationID: fmt.Sprintf("conv-%d", nextID)}
+		session.setConnected(true)
+		return session, nil
 	})
 
 	firstLease, err := manager.acquire(context.Background())
@@ -123,7 +126,9 @@ func TestWarmPool_MaintainsConfiguredIdleTarget(t *testing.T) {
 		nextID++
 		id := fmt.Sprintf("conv-%d", nextID)
 		started <- id
-		return &SessionState{ConversationID: id, Connected: true}, nil
+		session := &SessionState{ConversationID: id}
+		session.setConnected(true)
+		return session, nil
 	})
 
 	waitForWarmStart(t, started, "conv-1")
@@ -153,7 +158,9 @@ func TestWarmPool_NeverExceedsMaxSessions(t *testing.T) {
 		nextID++
 		id := fmt.Sprintf("conv-%d", nextID)
 		started <- id
-		return &SessionState{ConversationID: id, Connected: true}, nil
+		session := &SessionState{ConversationID: id}
+		session.setConnected(true)
+		return session, nil
 	})
 
 	waitForWarmStart(t, started, "conv-1")
@@ -189,6 +196,125 @@ func TestWarmPool_NeverExceedsMaxSessions(t *testing.T) {
 	case id := <-started:
 		t.Fatalf("unexpected extra warm start %q after warm target was restored", id)
 	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestJanitor_EvictsExpiredIdleSessionsOnly(t *testing.T) {
+	t.Parallel()
+
+	started := make(chan string, 4)
+	nextID := 0
+	created := make(map[string]*SessionState)
+	manager := newSessionManagerWithWarmPool(2, 1, func(ctx context.Context) (*SessionState, error) {
+		nextID++
+		id := fmt.Sprintf("conv-%d", nextID)
+		session := &SessionState{
+			ConversationID: id,
+			CreatedAt:      time.Now(),
+			LastUsedAt:     time.Now(),
+		}
+		session.setConnected(true)
+		created[id] = session
+		started <- id
+		return session, nil
+	})
+
+	waitForWarmStart(t, started, "conv-1")
+	waitForSessionSnapshot(t, manager, sessionSnapshot{total: 1, idle: 1})
+
+	lease, err := manager.acquire(context.Background())
+	if err != nil {
+		t.Fatalf("acquire() error = %v", err)
+	}
+
+	waitForWarmStart(t, started, "conv-2")
+	waitForSessionSnapshot(t, manager, sessionSnapshot{total: 2, leased: 1, idle: 1})
+
+	now := time.Now()
+	backdateManagedSession(t, manager, "conv-1", now.Add(-2*time.Minute))
+	backdateManagedSession(t, manager, "conv-2", now.Add(-2*time.Minute))
+
+	manager.evictExpiredIdle(now, time.Minute)
+
+	waitForWarmStart(t, started, "conv-3")
+	waitForSessionSnapshot(t, manager, sessionSnapshot{total: 2, leased: 1, idle: 1})
+
+	if !created["conv-1"].IsConnected() {
+		t.Fatal("leased session was closed by janitor, want preserved until release")
+	}
+	if created["conv-2"].IsConnected() {
+		t.Fatal("expired idle session remained connected after janitor eviction")
+	}
+
+	lease.Release()
+}
+
+func TestClientClose_ClosesIdleAndWaitsForLeases(t *testing.T) {
+	t.Parallel()
+
+	started := make(chan string, 4)
+	nextID := 0
+	created := make(map[string]*SessionState)
+	manager := newSessionManagerWithWarmPool(2, 1, func(ctx context.Context) (*SessionState, error) {
+		nextID++
+		id := fmt.Sprintf("conv-%d", nextID)
+		session := &SessionState{
+			ConversationID: id,
+			CreatedAt:      time.Now(),
+			LastUsedAt:     time.Now(),
+		}
+		session.setConnected(true)
+		created[id] = session
+		started <- id
+		return session, nil
+	})
+	client := &Client{sessionMgr: manager}
+
+	waitForWarmStart(t, started, "conv-1")
+	waitForSessionSnapshot(t, manager, sessionSnapshot{total: 1, idle: 1})
+
+	lease, err := manager.acquire(context.Background())
+	if err != nil {
+		t.Fatalf("acquire() error = %v", err)
+	}
+
+	waitForWarmStart(t, started, "conv-2")
+	waitForSessionSnapshot(t, manager, sessionSnapshot{total: 2, leased: 1, idle: 1})
+
+	closeErrCh := make(chan error, 1)
+	go func() {
+		closeErrCh <- client.Close(context.Background())
+	}()
+
+	waitForSessionSnapshot(t, manager, sessionSnapshot{total: 1, leased: 1})
+	if created["conv-2"].IsConnected() {
+		t.Fatal("idle session remained connected after Client.Close()")
+	}
+
+	select {
+	case err := <-closeErrCh:
+		t.Fatalf("Client.Close() returned early with %v, want wait for leased session release", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	lease.Release()
+
+	select {
+	case err := <-closeErrCh:
+		if err != nil {
+			t.Fatalf("Client.Close() error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for Client.Close() to finish after release")
+	}
+
+	if err := client.Close(context.Background()); err != nil {
+		t.Fatalf("second Client.Close() error = %v, want nil", err)
+	}
+
+	waitForSessionSnapshot(t, manager, sessionSnapshot{})
+	if created["conv-1"].IsConnected() {
+		t.Fatal("leased session remained connected after release during shutdown")
 	}
 }
 
@@ -283,6 +409,23 @@ func snapshotSessionManager(manager *sessionManager) sessionSnapshot {
 	return got
 }
 
+func backdateManagedSession(t *testing.T, manager *sessionManager, conversationID string, ts time.Time) {
+	t.Helper()
+
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	entry, ok := manager.sessions[conversationID]
+	if !ok {
+		t.Fatalf("session %q not found in manager", conversationID)
+	}
+
+	entry.updatedAt = ts
+	if entry.session != nil {
+		entry.session.LastUsedAt = ts
+	}
+}
+
 func TestSessionManager_AcquireParallelizesWarmups(t *testing.T) {
 	t.Parallel()
 
@@ -291,7 +434,9 @@ func TestSessionManager_AcquireParallelizesWarmups(t *testing.T) {
 	manager := newSessionManager(2, func(ctx context.Context) (*SessionState, error) {
 		started <- "started"
 		<-releaseStart
-		return &SessionState{ConversationID: time.Now().String(), Connected: true}, nil
+		session := &SessionState{ConversationID: time.Now().String()}
+		session.setConnected(true)
+		return session, nil
 	})
 
 	errCh := make(chan error, 3)
@@ -341,7 +486,9 @@ func TestSessionManager_ReturnsCapacityErrorWhenBudgetExpires(t *testing.T) {
 	manager := newSessionManager(1, func(ctx context.Context) (*SessionState, error) {
 		started <- struct{}{}
 		<-releaseStart
-		return &SessionState{ConversationID: "conv-capacity", Connected: true}, nil
+		session := &SessionState{ConversationID: "conv-capacity"}
+		session.setConnected(true)
+		return session, nil
 	})
 
 	firstErrCh := make(chan error, 1)
@@ -408,9 +555,13 @@ func TestSessionManager_ReleasesCapacityOnStartFailure(t *testing.T) {
 			return nil, errors.New("boom")
 		case 2:
 			close(secondStarted)
-			return &SessionState{ConversationID: "conv-retry", Connected: true}, nil
+			session := &SessionState{ConversationID: "conv-retry"}
+			session.setConnected(true)
+			return session, nil
 		default:
-			return &SessionState{ConversationID: "conv-extra", Connected: true}, nil
+			session := &SessionState{ConversationID: "conv-extra"}
+			session.setConnected(true)
+			return session, nil
 		}
 	})
 
