@@ -88,7 +88,6 @@ func TestClientIntegration_StreamEvents_emitsCurrentEventSequence_when_fakeUpstr
 		EventAppendText,
 		EventAppendText,
 		EventDone,
-		EventDone,
 	}
 	if !reflect.DeepEqual(gotTypes, wantTypes) {
 		t.Fatalf("event types = %v, want %v", gotTypes, wantTypes)

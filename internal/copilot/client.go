@@ -145,25 +145,6 @@ func (c *Client) Complete(ctx context.Context, input CompletionInput) (string, s
 	}
 }
 
-// StreamEvents returns a channel of StreamEvent for SSE streaming.
-func (c *Client) StreamEvents(ctx context.Context, input CompletionInput) (<-chan StreamEvent, error) {
-	session, sourceEvents, err := c.startPromptEvents(ctx, input)
-	if err != nil {
-		return nil, err
-	}
-
-	events := make(chan StreamEvent, 128)
-	go func() {
-		defer c.releaseSession(session)
-		defer close(events)
-		for evt := range sourceEvents {
-			events <- evt
-		}
-	}()
-
-	return events, nil
-}
-
 func (c *Client) startPromptEvents(ctx context.Context, input CompletionInput) (*SessionState, <-chan StreamEvent, error) {
 	for attempt := 0; attempt < 2; attempt++ {
 		var (
