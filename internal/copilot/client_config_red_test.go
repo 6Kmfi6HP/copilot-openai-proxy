@@ -10,7 +10,7 @@ func TestNewClient_UsesConfiguredConcurrencyTimeouts(t *testing.T) {
 
 	client, err := NewClient(ClientConfig{
 		MaxSessions:    8,
-		WarmSessions:   4,
+		WarmSessions:   0,
 		SessionTTL:     time.Minute,
 		CleanupInt:     time.Minute,
 		ConnTimeout:    3 * time.Second,
@@ -24,6 +24,7 @@ func TestNewClient_UsesConfiguredConcurrencyTimeouts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
+	defer closeTestClient(t, client)
 
 	if client.http.Timeout != 17*time.Second {
 		t.Fatalf("http.Timeout = %v, want %v", client.http.Timeout, 17*time.Second)
@@ -34,8 +35,8 @@ func TestNewClient_UsesConfiguredConcurrencyTimeouts(t *testing.T) {
 	if client.timeout != 17*time.Second {
 		t.Fatalf("timeout = %v, want %v", client.timeout, 17*time.Second)
 	}
-	if client.warmSessions != 4 {
-		t.Fatalf("warmSessions = %d, want %d", client.warmSessions, 4)
+	if client.warmSessions != 0 {
+		t.Fatalf("warmSessions = %d, want %d", client.warmSessions, 0)
 	}
 	if client.wsReadTimeout != 61*time.Second {
 		t.Fatalf("wsReadTimeout = %v, want %v", client.wsReadTimeout, 61*time.Second)

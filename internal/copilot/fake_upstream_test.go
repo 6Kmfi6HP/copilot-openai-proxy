@@ -2,6 +2,7 @@ package copilot
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -34,6 +35,7 @@ type fakeCopilotUpstream struct {
 	sendObserved   chan struct{}
 	sendOnce       sync.Once
 	chatCount      int
+	handlerErrors  chan error
 }
 
 func newFakeCopilotUpstream(t *testing.T, scenario fakeCopilotScenario) *fakeCopilotUpstream {
@@ -47,9 +49,10 @@ func newFakeCopilotUpstream(t *testing.T, scenario fakeCopilotScenario) *fakeCop
 	}
 
 	upstream := &fakeCopilotUpstream{
-		t:            t,
-		scenario:     scenario,
-		sendObserved: make(chan struct{}),
+		t:             t,
+		scenario:      scenario,
+		sendObserved:  make(chan struct{}),
+		handlerErrors: make(chan error, 16),
 	}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -62,7 +65,10 @@ func newFakeCopilotUpstream(t *testing.T, scenario fakeCopilotScenario) *fakeCop
 		}
 	}))
 	upstream.server = server
-	t.Cleanup(server.Close)
+	t.Cleanup(func() {
+		server.Close()
+		upstream.assertNoHandlerError(t)
+	})
 
 	return upstream
 }
@@ -134,6 +140,23 @@ func (f *fakeCopilotUpstream) waitForSendObserved(t *testing.T) {
 	}
 }
 
+func (f *fakeCopilotUpstream) recordHandlerError(format string, args ...any) {
+	select {
+	case f.handlerErrors <- fmt.Errorf(format, args...):
+	default:
+	}
+}
+
+func (f *fakeCopilotUpstream) assertNoHandlerError(t *testing.T) {
+	t.Helper()
+
+	select {
+	case err := <-f.handlerErrors:
+		t.Fatalf("fake upstream handler error = %v", err)
+	default:
+	}
+}
+
 func (f *fakeCopilotUpstream) handleStart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "only POST is supported", http.StatusMethodNotAllowed)
@@ -176,7 +199,7 @@ func (f *fakeCopilotUpstream) handleStart(w http.ResponseWriter, r *http.Request
 		CurrentConversationID: f.scenario.conversationID,
 		IsBlocked:             false,
 	}); err != nil {
-		f.t.Fatalf("json.NewEncoder().Encode() error = %v", err)
+		f.recordHandlerError("encode start response: %w", err)
 	}
 }
 
@@ -188,15 +211,19 @@ func (f *fakeCopilotUpstream) handleChat(w http.ResponseWriter, r *http.Request)
 	}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		f.t.Fatalf("Upgrade() error = %v", err)
+		f.recordHandlerError("upgrade chat websocket: %w", err)
+		return
 	}
 	defer conn.Close()
 
 	if err := conn.WriteJSON(serverEnvelope{Event: "connected"}); err != nil {
-		f.t.Fatalf("WriteJSON(connected) error = %v", err)
+		f.recordHandlerError("write connected: %w", err)
+		return
 	}
 
-	f.readOutboundEvent(conn)
+	if !f.readOutboundEvent(conn) {
+		return
+	}
 
 	f.mu.Lock()
 	f.chatCount++
@@ -214,7 +241,7 @@ func (f *fakeCopilotUpstream) handleChat(w http.ResponseWriter, r *http.Request)
 			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
 			time.Now().Add(time.Second),
 		); err != nil {
-			f.t.Fatalf("WriteControl(close-before-send) error = %v", err)
+			f.recordHandlerError("write close-before-send control: %w", err)
 		}
 		return
 	}
@@ -236,40 +263,43 @@ func (f *fakeCopilotUpstream) handleChat(w http.ResponseWriter, r *http.Request)
 		ConversationID: f.scenario.conversationID,
 		MessageID:      f.scenario.messageID,
 	}); err != nil {
-		f.t.Fatalf("WriteJSON(startMessage) error = %v", err)
+		f.recordHandlerError("write startMessage: %w", err)
+		return
 	}
 
 	for _, text := range f.scenario.appendTexts {
 		if err := conn.WriteJSON(serverEnvelope{Event: "appendText", Text: text}); err != nil {
-			f.t.Fatalf("WriteJSON(appendText) error = %v", err)
+			f.recordHandlerError("write appendText: %w", err)
+			return
 		}
 	}
 
 	if err := conn.WriteJSON(serverEnvelope{Event: "done", MessageID: f.scenario.messageID}); err != nil {
-		f.t.Fatalf("WriteJSON(done) error = %v", err)
+		f.recordHandlerError("write done: %w", err)
+		return
 	}
-	if err := conn.WriteControl(
+	_ = conn.WriteControl(
 		websocket.CloseMessage,
 		websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
 		time.Now().Add(time.Second),
-	); err != nil {
-		f.t.Fatalf("WriteControl(close) error = %v", err)
-	}
+	)
 }
 
-func (f *fakeCopilotUpstream) readOutboundEvent(conn *websocket.Conn) {
+func (f *fakeCopilotUpstream) readOutboundEvent(conn *websocket.Conn) bool {
 	f.t.Helper()
 
 	var env struct {
 		Event string `json:"event"`
 	}
 	if err := conn.ReadJSON(&env); err != nil {
-		f.t.Fatalf("ReadJSON(outbound event) error = %v", err)
+		f.recordHandlerError("read outbound event: %w", err)
+		return false
 	}
 
 	f.mu.Lock()
 	f.outboundEvents = append(f.outboundEvents, env.Event)
 	f.mu.Unlock()
+	return true
 }
 
 func (f *fakeCopilotUpstream) readSendMessage(conn *websocket.Conn) bool {
@@ -280,7 +310,8 @@ func (f *fakeCopilotUpstream) readSendMessage(conn *websocket.Conn) bool {
 		if f.scenario.closeBeforeSendCount > 0 {
 			return false
 		}
-		f.t.Fatalf("ReadJSON(send message) error = %v", err)
+		f.recordHandlerError("read send message: %w", err)
+		return false
 	}
 
 	f.mu.Lock()

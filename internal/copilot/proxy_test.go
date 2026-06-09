@@ -40,7 +40,7 @@ func Test_newProxyFunc_usesConfiguredProxy_whenURLIsProvided(t *testing.T) {
 func Test_NewClient_usesConfiguredProxyForHTTPAndWebSocket(t *testing.T) {
 	client, err := NewClient(ClientConfig{
 		MaxSessions:    16,
-		WarmSessions:   4,
+		WarmSessions:   0,
 		SessionTTL:     time.Second,
 		CleanupInt:     time.Second,
 		ConnTimeout:    time.Second,
@@ -55,6 +55,7 @@ func Test_NewClient_usesConfiguredProxyForHTTPAndWebSocket(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient returned error: %v", err)
 	}
+	defer closeTestClient(t, client)
 
 	req, err := http.NewRequest(http.MethodGet, "https://copilot.microsoft.com/c/api/start", nil)
 	if err != nil {

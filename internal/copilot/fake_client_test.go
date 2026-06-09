@@ -19,6 +19,9 @@ func newClientForTestServer(t *testing.T, server *httptest.Server, cfg ClientCon
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
+	t.Cleanup(func() {
+		closeTestClient(t, client)
+	})
 
 	client.http.Transport = server.Client().Transport
 	client.wsDialer.Proxy = nil
