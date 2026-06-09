@@ -33,6 +33,21 @@ func (m *sessionManager) acquire(ctx context.Context) (*sessionLease, error) {
 	return lease, nil
 }
 
+func (m *sessionManager) acquireFresh(ctx context.Context) (*sessionLease, error) {
+	if err := m.capacity.Acquire(ctx, 1); err != nil {
+		return nil, NewCapacityError("session capacity exhausted", err)
+	}
+
+	warmingID := m.reserveWarming(false)
+	session, err := m.startSession(ctx)
+	if err != nil {
+		m.remove(warmingID)
+		return nil, err
+	}
+
+	return m.activateLease(warmingID, session), nil
+}
+
 func (m *sessionManager) reserveWarming(pooled bool) string {
 	m.mu.Lock()
 	defer m.mu.Unlock()

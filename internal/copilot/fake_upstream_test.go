@@ -22,6 +22,8 @@ type fakeCopilotScenario struct {
 	expectSend     bool
 	startDelay     time.Duration
 	holdChatOpen   bool
+	idleCloseAfter time.Duration
+	closeBeforeSendCount int
 }
 
 type fakeCopilotUpstream struct {
@@ -35,6 +37,7 @@ type fakeCopilotUpstream struct {
 	lastSend       sendMessage
 	sendObserved   chan struct{}
 	sendOnce       sync.Once
+	chatCount      int
 }
 
 func newFakeCopilotUpstream(t *testing.T, scenario fakeCopilotScenario) *fakeCopilotUpstream {
@@ -71,7 +74,7 @@ func newFakeCopilotUpstream(t *testing.T, scenario fakeCopilotScenario) *fakeCop
 func (f *fakeCopilotUpstream) newClient(t *testing.T) *Client {
 	t.Helper()
 
-	client, err := NewClient(ClientConfig{
+	return f.newClientWithConfig(t, ClientConfig{
 		MaxSessions:    8,
 		WarmSessions:   0,
 		SessionTTL:     time.Minute,
@@ -84,6 +87,12 @@ func (f *fakeCopilotUpstream) newClient(t *testing.T) *Client {
 		Debug:          false,
 		TimeZone:       "UTC",
 	})
+}
+
+func (f *fakeCopilotUpstream) newClientWithConfig(t *testing.T, cfg ClientConfig) *Client {
+	t.Helper()
+
+	client, err := NewClient(cfg)
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -209,11 +218,35 @@ func (f *fakeCopilotUpstream) handleChat(w http.ResponseWriter, r *http.Request)
 	}
 
 	f.readOutboundEvent(conn)
+
+	f.mu.Lock()
+	f.chatCount++
+	chatCount := f.chatCount
+	idleCloseAfter := f.scenario.idleCloseAfter
+	closeBeforeSendCount := f.scenario.closeBeforeSendCount
+	f.mu.Unlock()
+
+	if closeBeforeSendCount > 0 && chatCount <= closeBeforeSendCount {
+		if idleCloseAfter > 0 {
+			time.Sleep(idleCloseAfter)
+		}
+		if err := conn.WriteControl(
+			websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+			time.Now().Add(time.Second),
+		); err != nil {
+			f.t.Fatalf("WriteControl(close-before-send) error = %v", err)
+		}
+		return
+	}
+
 	if !f.scenario.expectSend {
 		return
 	}
 
-	f.readSendMessage(conn)
+	if !f.readSendMessage(conn) {
+		return
+	}
 	if f.scenario.holdChatOpen {
 		<-r.Context().Done()
 		return
@@ -260,11 +293,14 @@ func (f *fakeCopilotUpstream) readOutboundEvent(conn *websocket.Conn) {
 	f.mu.Unlock()
 }
 
-func (f *fakeCopilotUpstream) readSendMessage(conn *websocket.Conn) {
+func (f *fakeCopilotUpstream) readSendMessage(conn *websocket.Conn) bool {
 	f.t.Helper()
 
 	var msg sendMessage
 	if err := conn.ReadJSON(&msg); err != nil {
+		if f.scenario.closeBeforeSendCount > 0 {
+			return false
+		}
 		f.t.Fatalf("ReadJSON(send message) error = %v", err)
 	}
 
@@ -275,6 +311,7 @@ func (f *fakeCopilotUpstream) readSendMessage(conn *websocket.Conn) {
 	f.sendOnce.Do(func() {
 		close(f.sendObserved)
 	})
+	return true
 }
 
 type rewriteRoundTripper struct {

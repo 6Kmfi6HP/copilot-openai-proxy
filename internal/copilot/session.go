@@ -55,6 +55,24 @@ func (c *Client) getOrCreateSession(ctx context.Context) (*SessionState, error) 
 	return session, nil
 }
 
+func (c *Client) getFreshSession(ctx context.Context) (*SessionState, error) {
+	sessionCtx, cancel := c.withRequestTimeout(ctx)
+	defer cancel()
+
+	lease, err := c.sessionMgr.acquireFresh(sessionCtx)
+	if err != nil {
+		return nil, err
+	}
+
+	session := lease.Session()
+	if session == nil {
+		lease.Release()
+		return nil, fmt.Errorf("copilot session manager returned nil session")
+	}
+	session.lease = lease
+	return session, nil
+}
+
 func (c *Client) releaseSession(session *SessionState) {
 	if session == nil || session.lease == nil {
 		return

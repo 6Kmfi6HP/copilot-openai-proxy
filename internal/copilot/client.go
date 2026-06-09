@@ -3,6 +3,7 @@ package copilot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -111,28 +112,11 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 
 // Complete sends a prompt and returns the full completion text.
 func (c *Client) Complete(ctx context.Context, input CompletionInput) (string, string, error) {
-	session, err := c.getOrCreateSession(ctx)
+	session, events, err := c.startPromptEvents(ctx, input)
 	if err != nil {
-		return "", "", fmt.Errorf("get session: %w", err)
+		return "", "", err
 	}
 	defer c.releaseSession(session)
-
-	events := make(chan StreamEvent, 128)
-	done := make(chan struct{})
-	pump := c.newConnPump(ctx, session.Conn)
-	go func() {
-		defer close(done)
-		defer close(events)
-		pump.run(events)
-	}()
-
-	// Send the prompt via "send" event with the conversation ID.
-	log.Printf("copilot send event=send session_id=%s conversation_id=%s prompt_len=%d",
-		session.ClientSessionID, session.ConversationID, len(input.Prompt))
-	if err := pump.send(ctx, newSendMessage(input.Prompt, session.ConversationID, input.Mode)); err != nil {
-		c.InvalidateSession(session.ConversationID)
-		return "", "", fmt.Errorf("copilot websocket send: %w", err)
-	}
 
 	// Collect until done.
 	var b strings.Builder
@@ -163,25 +147,74 @@ func (c *Client) Complete(ctx context.Context, input CompletionInput) (string, s
 
 // StreamEvents returns a channel of StreamEvent for SSE streaming.
 func (c *Client) StreamEvents(ctx context.Context, input CompletionInput) (<-chan StreamEvent, error) {
-	session, err := c.getOrCreateSession(ctx)
+	session, sourceEvents, err := c.startPromptEvents(ctx, input)
 	if err != nil {
-		return nil, fmt.Errorf("get session: %w", err)
+		return nil, err
 	}
 
 	events := make(chan StreamEvent, 128)
-	pump := c.newConnPump(ctx, session.Conn)
 	go func() {
 		defer c.releaseSession(session)
 		defer close(events)
-		pump.run(events)
+		for evt := range sourceEvents {
+			events <- evt
+		}
 	}()
 
-	if err := pump.send(ctx, newSendMessage(input.Prompt, session.ConversationID, input.Mode)); err != nil {
-		c.InvalidateSession(session.ConversationID)
-		return nil, fmt.Errorf("copilot websocket send: %w", err)
+	return events, nil
+}
+
+func (c *Client) startPromptEvents(ctx context.Context, input CompletionInput) (*SessionState, <-chan StreamEvent, error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		var (
+			session *SessionState
+			err     error
+		)
+		if attempt == 0 {
+			session, err = c.getOrCreateSession(ctx)
+		} else {
+			session, err = c.getFreshSession(ctx)
+		}
+		if err != nil {
+			return nil, nil, fmt.Errorf("get session: %w", err)
+		}
+
+		events := make(chan StreamEvent, 128)
+		pump := c.newConnPump(ctx, session.Conn)
+		go func() {
+			defer close(events)
+			pump.run(events)
+		}()
+
+		log.Printf("copilot send event=send session_id=%s conversation_id=%s prompt_len=%d",
+			session.ClientSessionID, session.ConversationID, len(input.Prompt))
+		if err := pump.send(ctx, newSendMessage(input.Prompt, session.ConversationID, input.Mode)); err == nil {
+			return session, events, nil
+		} else {
+			c.InvalidateSession(session.ConversationID)
+			if !c.shouldRetryPromptSend(ctx, err, attempt) {
+				return nil, nil, fmt.Errorf("copilot websocket send: %w", err)
+			}
+			if c.sessionMgr != nil {
+				c.sessionMgr.dropIdleSessions()
+			}
+		}
 	}
 
-	return events, nil
+	return nil, nil, fmt.Errorf("copilot websocket send: exhausted retries")
+}
+
+func (c *Client) shouldRetryPromptSend(ctx context.Context, err error, attempt int) bool {
+	if attempt > 0 || err == nil {
+		return false
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	return true
 }
 
 func (c *Client) waitForConnected(ctx context.Context, conn *websocket.Conn) error {

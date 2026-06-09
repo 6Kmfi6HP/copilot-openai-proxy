@@ -55,6 +55,14 @@ func (m *sessionManager) stopRefill() {
 	}
 }
 
+func (m *sessionManager) dropIdleSessions() {
+	victims, released := m.takeIdleVictims()
+	if released > 0 {
+		m.capacity.Release(int64(released))
+	}
+	closeSessions(victims)
+}
+
 func (m *sessionManager) takeExpiredIdle(now time.Time, ttl time.Duration) ([]*SessionState, int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -98,6 +106,39 @@ func (m *sessionManager) takeShutdownVictims() ([]*SessionState, int) {
 	for id, entry := range m.sessions {
 		switch entry.status {
 		case sessionStatusIdle, sessionStatusDraining, sessionStatusClosed:
+			entry.status = sessionStatusClosed
+			delete(m.sessions, id)
+			if entry.holdsCapacity {
+				entry.holdsCapacity = false
+				released++
+			}
+			victims = append(victims, entry.session)
+		case sessionStatusWarming:
+			if !entry.pooled {
+				continue
+			}
+			delete(m.sessions, id)
+			if entry.holdsCapacity {
+				entry.holdsCapacity = false
+				released++
+			}
+		}
+	}
+	if len(victims) > 0 || released > 0 {
+		m.compactLocked()
+	}
+	return victims, released
+}
+
+func (m *sessionManager) takeIdleVictims() ([]*SessionState, int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	victims := make([]*SessionState, 0)
+	released := 0
+	for id, entry := range m.sessions {
+		switch entry.status {
+		case sessionStatusIdle:
 			entry.status = sessionStatusClosed
 			delete(m.sessions, id)
 			if entry.holdsCapacity {

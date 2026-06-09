@@ -170,6 +170,55 @@ func TestComplete_HonorsRequestContextCancellation(t *testing.T) {
 	}
 }
 
+func TestStreamEvents_RecoversFromClosedWarmSessionBeforeSend(t *testing.T) {
+	t.Parallel()
+
+	upstream := newFakeCopilotUpstream(t, fakeCopilotScenario{
+		conversationID:       "conv-recovered",
+		messageID:            "msg-recovered",
+		appendTexts:          []string{"fresh"},
+		expectSend:           true,
+		idleCloseAfter:       20 * time.Millisecond,
+		closeBeforeSendCount: 1,
+	})
+
+	client := upstream.newClientWithConfig(t, ClientConfig{
+		MaxSessions:    2,
+		WarmSessions:   1,
+		SessionTTL:     time.Minute,
+		CleanupInt:     time.Minute,
+		ConnTimeout:    time.Second,
+		Timeout:        time.Second,
+		WSReadTimeout:  time.Minute,
+		WSWriteTimeout: time.Second,
+		WSPingInterval: 25 * time.Second,
+		Debug:          false,
+		TimeZone:       "UTC",
+	})
+
+	waitForSessionSnapshot(t, client.sessionMgr, sessionSnapshot{total: 1, idle: 1})
+	time.Sleep(50 * time.Millisecond)
+
+	events, err := client.StreamEvents(context.Background(), CompletionInput{
+		Prompt: "recover warm session",
+		Mode:   "smart",
+	})
+	if err != nil {
+		t.Fatalf("StreamEvents() error = %v", err)
+	}
+
+	gotEvents := collectStreamEvents(t, events)
+	if len(gotEvents) == 0 {
+		t.Fatal("event count = 0, want streamed events after retrying a fresh session")
+	}
+	if gotEvents[0].Type != EventStartMessage {
+		t.Fatalf("first event type = %v, want %v", gotEvents[0].Type, EventStartMessage)
+	}
+	if gotEvents[1].Type != EventAppendText || gotEvents[1].Text != "fresh" {
+		t.Fatalf("append event = %+v, want fresh appendText", gotEvents[1])
+	}
+}
+
 func collectStreamEvents(t *testing.T, events <-chan StreamEvent) []StreamEvent {
 	t.Helper()
 
