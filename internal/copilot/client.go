@@ -204,14 +204,26 @@ func (c *Client) waitForConnected(ctx context.Context, conn *websocket.Conn) err
 	}
 
 	stop := make(chan struct{})
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		select {
 		case <-ctx.Done():
 			_ = conn.Close()
 		case <-stop:
 		}
 	}()
-	defer close(stop)
+	// Ensure the watcher goroutine has exited before returning. If the caller
+	// cancels ctx immediately after this returns (e.g. a request-scoped
+	// sessionCtx whose cancel is deferred), a still-scheduled watcher could
+	// select the ctx.Done() branch and spuriously close a freshly established
+	// connection before the prompt is sent. Closing stop and draining done
+	// here makes that race impossible: closing stop guarantees the goroutine
+	// will pick the stop branch, and <-done waits until it is gone.
+	defer func() {
+		close(stop)
+		<-done
+	}()
 
 	if deadline := c.connectedReadDeadline(ctx); !deadline.IsZero() {
 		_ = conn.SetReadDeadline(deadline)
