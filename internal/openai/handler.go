@@ -244,6 +244,20 @@ func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request, input c
 						{Index: 0, Delta: ChunkDelta{Content: evt.Text}},
 					},
 				})
+			case copilot.EventImageGenerated:
+				content := copilot.ImageMarkdown(evt.ImageURL)
+				if content == "" {
+					continue
+				}
+				sse.WriteJSON(ChatCompletionChunk{
+					ID:      completionID,
+					Object:  "chat.completion.chunk",
+					Created: created,
+					Model:   input.StreamModel,
+					Choices: []ChunkChoice{
+						{Index: 0, Delta: ChunkDelta{Content: content}},
+					},
+				})
 			case copilot.EventError:
 				if copilot.IsClientCanceled(evt.Err) {
 					writeStreamDone(sse, completionID, created, input.StreamModel)

@@ -19,14 +19,16 @@ const (
 	EventError
 	EventDone
 	EventChallenge
+	EventImageGenerated
 )
 
 // StreamEvent is a single event emitted from the Copilot WebSocket read loop.
 type StreamEvent struct {
 	Type           StreamEventType
 	Text           string // EventAppendText
-	MessageID      string // EventStartMessage
+	MessageID      string // EventStartMessage / EventImageGenerated / EventDone
 	ConversationID string // EventStartMessage
+	ImageURL       string // EventImageGenerated
 	Err            error  // EventError
 	ChallengeParam string // EventChallenge: hashcash parameter
 }
@@ -34,7 +36,7 @@ type StreamEvent struct {
 // serverEnvelope wraps messages received from the Copilot WebSocket.
 // The real Copilot protocol uses "event" field (not "type").
 type serverEnvelope struct {
-	Event          string `json:"event"` // connected, received, startMessage, appendText, partCompleted, done, error, challenge
+	Event          string `json:"event"` // connected, received, startMessage, appendText, partCompleted, done, error, challenge, imageGenerated, ...
 	ConversationID string `json:"conversationId,omitempty"`
 	MessageID      string `json:"messageId,omitempty"`
 	PartID         string `json:"partId,omitempty"`
@@ -45,7 +47,9 @@ type serverEnvelope struct {
 	Parameter      string `json:"parameter,omitempty"` // challenge parameter
 	RequestID      string `json:"requestId,omitempty"` // connected
 	CreatedAt      string `json:"createdAt,omitempty"`
-	ID             string `json:"id,omitempty"` // sequential event ID
+	ID             string `json:"id,omitempty"`            // sequential event ID
+	URL            string `json:"url,omitempty"`           // imageGenerated
+	ThumbnailURL   string `json:"thumbnailUrl,omitempty"` // imageGenerated
 }
 
 // --- Outbound protocol messages ---
@@ -128,12 +132,22 @@ func defaultSetOptions() setOptionsMessage {
 	}
 }
 
+// ImageMarkdown formats an upstream image URL as OpenAI-compatible Markdown content.
+func ImageMarkdown(url string) string {
+	if strings.TrimSpace(url) == "" {
+		return ""
+	}
+	return "\n![image](" + url + ")\n"
+}
+
 // parseServerEvent parses an incoming WebSocket message into a StreamEvent.
 // Copilot protocol events:
 //   - connected: session established
 //   - received: server acknowledged our message
 //   - startMessage: assistant starts generating
 //   - appendText: partial text delta
+//   - imageGenerated: final generated image URL
+//   - generatingImage / partialImageGenerated: progress (ignored)
 //   - partCompleted: one part of the response is done
 //   - done: full response complete
 //   - error: something went wrong
@@ -152,6 +166,18 @@ func parseServerEvent(raw []byte) (StreamEvent, error) {
 			MessageID:      env.MessageID,
 			ConversationID: env.ConversationID,
 		}, nil
+	case "imageGenerated":
+		url := strings.TrimSpace(env.URL)
+		if url == "" {
+			return StreamEvent{Type: EventIgnore}, nil
+		}
+		return StreamEvent{
+			Type:      EventImageGenerated,
+			MessageID: env.MessageID,
+			ImageURL:  url,
+		}, nil
+	case "generatingImage", "partialImageGenerated":
+		return StreamEvent{Type: EventIgnore}, nil
 	case "challenge":
 		// Hashcash challenge: the client needs to solve this and respond.
 		// For now we pass it through; the readLoop will handle it.

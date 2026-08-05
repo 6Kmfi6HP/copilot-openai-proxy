@@ -540,6 +540,55 @@ func TestChatCompletions_StreamResponseUsesSelectedModel(t *testing.T) {
 	}
 }
 
+func TestChatCompletions_StreamResponseEmbedsImageMarkdown(t *testing.T) {
+	imageURL := "https://copilot.microsoft.com/th/id/BCO.test-image.png"
+	events := make(chan copilot.StreamEvent, 3)
+	events <- copilot.StreamEvent{Type: copilot.EventImageGenerated, ImageURL: imageURL}
+	events <- copilot.StreamEvent{Type: copilot.EventAppendText, Text: "Here is your image."}
+	events <- copilot.StreamEvent{Type: copilot.EventDone}
+	close(events)
+
+	fake := &fakeChatClient{streamEvents: events}
+	handler := &Handler{client: fake}
+
+	body := `{"model":"creative","messages":[{"role":"user","content":"draw an apple"}],"stream":true}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.ChatCompletions(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	frames := sseDataFrames(t, rec.Body.String())
+	// role + image markdown + text + finish + [DONE]
+	if len(frames) != 5 {
+		t.Fatalf("frame count = %d, want %d; body=%s", len(frames), 5, rec.Body.String())
+	}
+
+	var imageChunk ChatCompletionChunk
+	if err := json.Unmarshal([]byte(frames[1]), &imageChunk); err != nil {
+		t.Fatalf("unmarshal image chunk: %v", err)
+	}
+	wantImage := copilot.ImageMarkdown(imageURL)
+	if imageChunk.Choices[0].Delta.Content != wantImage {
+		t.Fatalf("image content = %q, want %q", imageChunk.Choices[0].Delta.Content, wantImage)
+	}
+	if imageChunk.Model != "creative" {
+		t.Fatalf("model = %q, want %q", imageChunk.Model, "creative")
+	}
+
+	var textChunk ChatCompletionChunk
+	if err := json.Unmarshal([]byte(frames[2]), &textChunk); err != nil {
+		t.Fatalf("unmarshal text chunk: %v", err)
+	}
+	if textChunk.Choices[0].Delta.Content != "Here is your image." {
+		t.Fatalf("text content = %q, want %q", textChunk.Choices[0].Delta.Content, "Here is your image.")
+	}
+}
+
 func sseDataFrames(t *testing.T, body string) []string {
 	t.Helper()
 

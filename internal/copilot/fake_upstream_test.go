@@ -16,6 +16,7 @@ type fakeCopilotScenario struct {
 	conversationID       string
 	messageID            string
 	appendTexts          []string
+	imageURL             string
 	expectSend           bool
 	startDelay           time.Duration
 	holdChatOpen         bool
@@ -265,6 +266,34 @@ func (f *fakeCopilotUpstream) handleChat(w http.ResponseWriter, r *http.Request)
 	}); err != nil {
 		f.recordHandlerError("write startMessage: %w", err)
 		return
+	}
+
+	if f.scenario.imageURL != "" {
+		if err := conn.WriteJSON(serverEnvelope{
+			Event:     "generatingImage",
+			MessageID: f.scenario.messageID,
+			PartID:    "part-image",
+		}); err != nil {
+			f.recordHandlerError("write generatingImage: %w", err)
+			return
+		}
+		if err := conn.WriteJSON(serverEnvelope{
+			Event:     "partialImageGenerated",
+			MessageID: f.scenario.messageID,
+			PartID:    "part-image",
+		}); err != nil {
+			f.recordHandlerError("write partialImageGenerated: %w", err)
+			return
+		}
+		if err := conn.WriteJSON(serverEnvelope{
+			Event:     "imageGenerated",
+			MessageID: f.scenario.messageID,
+			PartID:    "part-image",
+			URL:       f.scenario.imageURL,
+		}); err != nil {
+			f.recordHandlerError("write imageGenerated: %w", err)
+			return
+		}
 	}
 
 	for _, text := range f.scenario.appendTexts {

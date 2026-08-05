@@ -57,6 +57,37 @@ func TestClientIntegration_Complete_returnsFullText_when_fakeUpstreamStreamsAppe
 	}
 }
 
+func TestClientIntegration_Complete_embedsImageMarkdown_whenUpstreamGeneratesImage(t *testing.T) {
+	t.Parallel()
+
+	imageURL := "https://copilot.microsoft.com/th/id/BCO.test-image.png"
+	upstream := newFakeCopilotUpstream(t, fakeCopilotScenario{
+		conversationID: "conv-image",
+		messageID:      "msg-image",
+		imageURL:       imageURL,
+		appendTexts:    []string{"Here is your image."},
+		expectSend:     true,
+	})
+
+	client := upstream.newClient(t)
+
+	text, messageID, err := client.Complete(context.Background(), CompletionInput{
+		Prompt: "generate an apple",
+		Mode:   "creative",
+	})
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+	if messageID != "msg-image" {
+		t.Fatalf("messageID = %q, want %q", messageID, "msg-image")
+	}
+
+	want := ImageMarkdown(imageURL) + "Here is your image."
+	if text != want {
+		t.Fatalf("Complete() text = %q, want %q", text, want)
+	}
+}
+
 func TestClientIntegration_StreamEvents_emitsCurrentEventSequence_when_fakeUpstreamResponds(t *testing.T) {
 	t.Parallel()
 

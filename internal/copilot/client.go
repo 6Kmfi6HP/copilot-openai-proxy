@@ -67,7 +67,7 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create cookie jar: %w", err)
 	}
-	proxyFunc, err := newProxyFunc(cfg.ProxyURL)
+	outbound, err := newOutboundProxy(cfg.ProxyURL)
 	if err != nil {
 		return nil, fmt.Errorf("configure outbound proxy: %w", err)
 	}
@@ -76,16 +76,27 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		return nil, fmt.Errorf("default transport has unexpected type %T", http.DefaultTransport)
 	}
 
+	httpTransport := transport.Clone()
+	wsDialer := &websocket.Dialer{
+		HandshakeTimeout: cfg.ConnTimeout,
+	}
+	if outbound.dialContext != nil {
+		httpTransport.Proxy = nil
+		httpTransport.DialContext = outbound.dialContext
+		wsDialer.Proxy = nil
+		wsDialer.NetDialContext = outbound.dialContext
+	} else {
+		httpTransport.Proxy = outbound.proxyFunc
+		wsDialer.Proxy = outbound.proxyFunc
+	}
+
 	c := &Client{
 		http: &http.Client{
 			Jar:       jar,
 			Timeout:   cfg.Timeout,
-			Transport: transport.Clone(),
+			Transport: httpTransport,
 		},
-		wsDialer: &websocket.Dialer{
-			Proxy:            proxyFunc,
-			HandshakeTimeout: cfg.ConnTimeout,
-		},
+		wsDialer:       wsDialer,
 		maxSessions:    cfg.MaxSessions,
 		warmSessions:   cfg.WarmSessions,
 		sessionTTL:     cfg.SessionTTL,
@@ -100,11 +111,6 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		startURL:       cfg.StartURL,
 		wsURL:          cfg.WSURL,
 	}
-	httpTransport, ok := c.http.Transport.(*http.Transport)
-	if !ok {
-		return nil, fmt.Errorf("copilot transport has unexpected type %T", c.http.Transport)
-	}
-	httpTransport.Proxy = proxyFunc
 	c.sessionMgr = newSessionManagerWithWarmPool(cfg.MaxSessions, cfg.WarmSessions, c.startAnon)
 	c.startJanitor()
 	return c, nil
@@ -134,6 +140,8 @@ func (c *Client) Complete(ctx context.Context, input CompletionInput) (string, s
 			switch evt.Type {
 			case EventAppendText:
 				b.WriteString(evt.Text)
+			case EventImageGenerated:
+				b.WriteString(ImageMarkdown(evt.ImageURL))
 			case EventStartMessage:
 				messageID = evt.MessageID
 			case EventError:

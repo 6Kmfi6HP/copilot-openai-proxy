@@ -103,10 +103,16 @@ The proxy supports two ways to route outbound Copilot traffic:
 1. Set `PROXY_URL` when you want to force a specific upstream proxy for both the Copilot HTTP start request and the WebSocket connection.
 2. Use standard Go proxy environment variables such as `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and `NO_PROXY`.
 
-If you want to set a proxy IP directly, use a full proxy URL instead of a bare IP. Example:
+If you want to set a proxy IP directly, use a full proxy URL instead of a bare IP. Supported schemes: `http`, `https`, `socks5`, `socks5h`. Example:
 
 ```bash
 PROXY_URL=http://192.168.1.10:7890
+```
+
+SOCKS5 with username/password:
+
+```bash
+PROXY_URL='socks5://user:pass@192.168.1.10:1090'
 ```
 
 Example:
@@ -268,6 +274,7 @@ Contribution guide: [CONTRIBUTING.md](CONTRIBUTING.md)
 - This is an unofficial Copilot proxy. Upstream protocol or anti-abuse changes may require updates in this project.
 - Tool calling and function calling are not implemented.
 - The proxy focuses on chat completions and model listing, not the full OpenAI API surface.
+- When upstream Copilot generates an image, the proxy embeds it as Markdown `![image](url)` inside `message.content` / SSE `delta.content`. There is no `/v1/images/generations` endpoint.
 
 ## Project Layout
 
@@ -317,10 +324,11 @@ API_KEY=sk-change-me \
 ./copilot-openai-proxy
 ```
 
-也就是说，项目支持设置代理 IP，但要写成完整 URL，而不是只写裸 IP。例如：
+也就是说，项目支持设置代理 IP，但要写成完整 URL，而不是只写裸 IP。支持 `http` / `https` / `socks5` / `socks5h`。例如：
 
 ```bash
 PROXY_URL=http://192.168.1.10:7890
+PROXY_URL='socks5://user:pass@192.168.1.10:1090'
 ```
 
 也支持标准代理变量：
