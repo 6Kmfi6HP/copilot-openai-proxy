@@ -1,11 +1,15 @@
 package copilot
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 const (
-	defaultCopilotStartURL = "https://copilot.microsoft.com/c/api/start"
-	defaultCopilotWSURL    = "wss://copilot.microsoft.com/c/api/chat"
-	defaultTimeZone        = "Asia/Shanghai"
+	defaultCopilotStartURL       = "https://copilot.microsoft.com/c/api/start"
+	defaultCopilotWSURL          = "wss://copilot.microsoft.com/c/api/chat"
+	defaultCopilotAttachmentsURL = "https://copilot.microsoft.com/c/api/attachments"
+	defaultTimeZone              = "Asia/Shanghai"
 )
 
 type ClientConfig struct {
@@ -23,6 +27,7 @@ type ClientConfig struct {
 	ProxyURL       string
 	StartURL       string
 	WSURL          string
+	AttachmentsURL string
 }
 
 func (cfg ClientConfig) normalized() ClientConfig {
@@ -44,5 +49,16 @@ func (cfg ClientConfig) normalized() ClientConfig {
 	if cfg.WSURL == "" {
 		cfg.WSURL = defaultCopilotWSURL
 	}
+	if cfg.AttachmentsURL == "" {
+		cfg.AttachmentsURL = attachmentsURLFromStart(cfg.StartURL)
+	}
 	return cfg
+}
+
+func attachmentsURLFromStart(startURL string) string {
+	const suffix = "/c/api/start"
+	if strings.HasSuffix(startURL, suffix) {
+		return strings.TrimSuffix(startURL, "/start") + "/attachments"
+	}
+	return defaultCopilotAttachmentsURL
 }

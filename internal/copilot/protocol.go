@@ -47,8 +47,8 @@ type serverEnvelope struct {
 	Parameter      string `json:"parameter,omitempty"` // challenge parameter
 	RequestID      string `json:"requestId,omitempty"` // connected
 	CreatedAt      string `json:"createdAt,omitempty"`
-	ID             string `json:"id,omitempty"`            // sequential event ID
-	URL            string `json:"url,omitempty"`           // imageGenerated
+	ID             string `json:"id,omitempty"`           // sequential event ID
+	URL            string `json:"url,omitempty"`          // imageGenerated
 	ThumbnailURL   string `json:"thumbnailUrl,omitempty"` // imageGenerated
 }
 
@@ -75,10 +75,12 @@ type productOptions struct {
 }
 
 // sendContent represents a content item in a Copilot WebSocket send message.
-// This supports richer prompts with multiple content parts.
+// Text parts use Type "text" with Text set; image parts use Type "image" with URL set
+// (typically a relative path returned by POST /c/api/attachments).
 type sendContent struct {
 	Type string `json:"type"`
-	Text string `json:"text"`
+	Text string `json:"text,omitempty"`
+	URL  string `json:"url,omitempty"`
 }
 
 // sendMessage is the full message sent to the Copilot WebSocket

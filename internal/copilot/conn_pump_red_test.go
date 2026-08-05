@@ -72,7 +72,7 @@ func TestConnPump_SerializesPromptAndChallengeWrites(t *testing.T) {
 		close(done)
 	}()
 
-	if err := pump.send(context.Background(), newSendMessage("hello", "conv-pump", "smart")); err != nil {
+	if err := pump.send(context.Background(), newSendMessage("hello", "conv-pump", "smart", nil)); err != nil {
 		t.Fatalf("pump.send() error = %v", err)
 	}
 

@@ -63,13 +63,25 @@ func Test_defaultSetOptions_matchesReferenceCapabilities_whenMarshaled(t *testin
 }
 
 func Test_newSendMessage_usesContentArrayAndMode_whenMarshaled(t *testing.T) {
-	data, err := json.Marshal(newSendMessage("hello", "conv-1", "smart"))
+	data, err := json.Marshal(newSendMessage("hello", "conv-1", "smart", nil))
 
 	if err != nil {
 		t.Fatalf("json.Marshal returned error: %v", err)
 	}
 
 	want := `{"event":"send","content":[{"type":"text","text":"hello"}],"conversationId":"conv-1","mode":"smart","product":"smart"}`
+	if string(data) != want {
+		t.Fatalf("send message JSON = %s, want %s", data, want)
+	}
+}
+
+func Test_newSendMessage_placesImagePartsBeforeText_whenImageURLsProvided(t *testing.T) {
+	data, err := json.Marshal(newSendMessage("describe", "conv-1", "smart", []string{"/attachments/a.png", "/attachments/b.jpg"}))
+	if err != nil {
+		t.Fatalf("json.Marshal returned error: %v", err)
+	}
+
+	want := `{"event":"send","content":[{"type":"image","url":"/attachments/a.png"},{"type":"image","url":"/attachments/b.jpg"},{"type":"text","text":"describe"}],"conversationId":"conv-1","mode":"smart","product":"smart"}`
 	if string(data) != want {
 		t.Fatalf("send message JSON = %s, want %s", data, want)
 	}
@@ -113,7 +125,7 @@ func Test_newSendMessage_mapsNonSmartModelsToAcceptedProtocolFields(t *testing.T
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			data, err := json.Marshal(newSendMessage("hello", "conv-1", tt.mode))
+			data, err := json.Marshal(newSendMessage("hello", "conv-1", tt.mode, nil))
 
 			if err != nil {
 				t.Fatalf("json.Marshal returned error: %v", err)

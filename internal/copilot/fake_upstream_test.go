@@ -3,6 +3,7 @@ package copilot
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -29,14 +30,20 @@ type fakeCopilotUpstream struct {
 	scenario fakeCopilotScenario
 	server   *httptest.Server
 
-	mu             sync.Mutex
-	startRequests  []startRequestBody
-	outboundEvents []string
-	lastSend       sendMessage
-	sendObserved   chan struct{}
-	sendOnce       sync.Once
-	chatCount      int
-	handlerErrors  chan error
+	mu                sync.Mutex
+	startRequests     []startRequestBody
+	attachmentUploads []attachmentUploadRecord
+	outboundEvents    []string
+	lastSend          sendMessage
+	sendObserved      chan struct{}
+	sendOnce          sync.Once
+	chatCount         int
+	handlerErrors     chan error
+}
+
+type attachmentUploadRecord struct {
+	ContentType string
+	Body        []byte
 }
 
 func newFakeCopilotUpstream(t *testing.T, scenario fakeCopilotScenario) *fakeCopilotUpstream {
@@ -59,6 +66,8 @@ func newFakeCopilotUpstream(t *testing.T, scenario fakeCopilotScenario) *fakeCop
 		switch r.URL.Path {
 		case "/c/api/start":
 			upstream.handleStart(w, r)
+		case "/c/api/attachments":
+			upstream.handleAttachments(w, r)
 		case "/c/api/chat":
 			upstream.handleChat(w, r)
 		default:
@@ -129,6 +138,48 @@ func (f *fakeCopilotUpstream) lastSendMessage() sendMessage {
 	defer f.mu.Unlock()
 
 	return f.lastSend
+}
+
+func (f *fakeCopilotUpstream) recordedAttachments() []attachmentUploadRecord {
+	f.t.Helper()
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := make([]attachmentUploadRecord, len(f.attachmentUploads))
+	copy(out, f.attachmentUploads)
+	return out
+}
+
+func (f *fakeCopilotUpstream) handleAttachments(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "only POST is supported", http.StatusMethodNotAllowed)
+		return
+	}
+	defer r.Body.Close()
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	f.mu.Lock()
+	f.attachmentUploads = append(f.attachmentUploads, attachmentUploadRecord{
+		ContentType: r.Header.Get("Content-Type"),
+		Body:        append([]byte(nil), body...),
+	})
+	idx := len(f.attachmentUploads)
+	f.mu.Unlock()
+
+	id := fmt.Sprintf("att-%d", idx)
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(attachmentUploadResponse{
+		ID:  id,
+		URL: "/attachments/" + id + ".png",
+	}); err != nil {
+		f.recordHandlerError("encode attachment response: %w", err)
+	}
 }
 
 func (f *fakeCopilotUpstream) waitForSendObserved(t *testing.T) {

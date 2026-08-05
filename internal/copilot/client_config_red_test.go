@@ -53,6 +53,9 @@ func TestNewClient_UsesConfiguredConcurrencyTimeouts(t *testing.T) {
 	if client.wsURL != defaultCopilotWSURL {
 		t.Fatalf("wsURL = %q, want %q", client.wsURL, defaultCopilotWSURL)
 	}
+	if client.attachmentsURL != defaultCopilotAttachmentsURL {
+		t.Fatalf("attachmentsURL = %q, want %q", client.attachmentsURL, defaultCopilotAttachmentsURL)
+	}
 	if client.sessionMgr.maxSessions != 8 {
 		t.Fatalf("sessionMgr.maxSessions = %d, want %d", client.sessionMgr.maxSessions, 8)
 	}

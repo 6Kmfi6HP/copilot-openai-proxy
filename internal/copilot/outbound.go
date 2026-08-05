@@ -21,13 +21,19 @@ func buildWebSocketURL(baseURL string) (string, string, error) {
 	return parsed.String(), clientSessionID, nil
 }
 
-func newSendMessage(prompt, conversationID, mode string) sendMessage {
+func newSendMessage(prompt, conversationID, mode string, imageURLs []string) sendMessage {
 	mode, product := protocolModeAndProduct(mode)
+	content := make([]sendContent, 0, len(imageURLs)+1)
+	for _, imageURL := range imageURLs {
+		if imageURL == "" {
+			continue
+		}
+		content = append(content, sendContent{Type: "image", URL: imageURL})
+	}
+	content = append(content, sendContent{Type: "text", Text: prompt})
 	return sendMessage{
-		Event: "send",
-		Content: []sendContent{
-			{Type: "text", Text: prompt},
-		},
+		Event:          "send",
+		Content:        content,
 		ConversationID: conversationID,
 		Mode:           mode,
 		Product:        product,

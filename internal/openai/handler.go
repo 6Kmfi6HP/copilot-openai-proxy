@@ -3,7 +3,6 @@ package openai
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -66,73 +65,24 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build the prompt from messages.
-	prompt := buildPrompt(req)
+	payload, err := buildCompletionPayload(req)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
 
 	input := copilot.CompletionInput{
-		Prompt:      prompt,
+		Prompt:      payload.Prompt,
 		Mode:        mode,
 		Stream:      req.Stream,
 		StreamModel: selectedModel,
+		Images:      payload.Images,
 	}
 
 	if req.Stream {
 		h.streamResponse(w, r, input)
 	} else {
 		h.fullResponse(w, r, input, req)
-	}
-}
-
-// buildPrompt assembles a text prompt from the OpenAI chat messages.
-// The Copilot WebSocket expects a plain text prompt.
-func buildPrompt(req ChatCompletionRequest) string {
-	var b strings.Builder
-	for _, msg := range req.Messages {
-		role := msg.Role
-		content := messageContentText(msg.Content)
-		switch role {
-		case "system":
-			b.WriteString("[System] ")
-			b.WriteString(content)
-			b.WriteString("\n\n")
-		case "user":
-			b.WriteString(content)
-			b.WriteString("\n")
-		case "assistant":
-			b.WriteString("[Assistant] ")
-			b.WriteString(content)
-			b.WriteString("\n")
-		default:
-			b.WriteString(content)
-			b.WriteString("\n")
-		}
-	}
-	return b.String()
-}
-
-// messageContentText extracts text from a message content field.
-// Supports both plain string content and array of content parts (text-only).
-func messageContentText(content interface{}) string {
-	switch v := content.(type) {
-	case string:
-		return v
-	case []interface{}:
-		var b strings.Builder
-		for _, part := range v {
-			if m, ok := part.(map[string]interface{}); ok {
-				if m["type"] == "text" {
-					if text, ok := m["text"].(string); ok {
-						if b.Len() > 0 {
-							b.WriteString("\n")
-						}
-						b.WriteString(text)
-					}
-				}
-			}
-		}
-		return b.String()
-	default:
-		return fmt.Sprintf("%v", content)
 	}
 }
 

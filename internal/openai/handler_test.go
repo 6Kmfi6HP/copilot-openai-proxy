@@ -78,7 +78,9 @@ func TestChatCompletions_buildsPromptFromMixedMessageContent_whenRequestIsNonStr
 	fake := &fakeChatClient{completeText: "completion"}
 	handler := &Handler{client: fake}
 
-	body := `{"model":"creative","messages":[{"role":"system","content":"Guardrails"},{"role":"user","content":[{"type":"text","text":"First line"},{"type":"image_url","image_url":{"url":"https://example.com/image.png"}},{"type":"text","text":"Second line"}]},{"role":"assistant","content":"Earlier answer"},{"role":"user","content":"Final question"}]}`
+	// 1x1 PNG
+	dataURI := "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+	body := `{"model":"creative","messages":[{"role":"system","content":"Guardrails"},{"role":"user","content":[{"type":"text","text":"First line"},{"type":"image_url","image_url":{"url":"` + dataURI + `"}},{"type":"text","text":"Second line"}]},{"role":"assistant","content":"Earlier answer"},{"role":"user","content":"Final question"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -102,6 +104,15 @@ func TestChatCompletions_buildsPromptFromMixedMessageContent_whenRequestIsNonStr
 	if fake.input.Mode != "creative" {
 		t.Fatalf("mode = %q, want %q", fake.input.Mode, "creative")
 	}
+	if len(fake.input.Images) != 1 {
+		t.Fatalf("images = %d, want 1", len(fake.input.Images))
+	}
+	if fake.input.Images[0].MIME != "image/png" {
+		t.Fatalf("image mime = %q, want image/png", fake.input.Images[0].MIME)
+	}
+	if len(fake.input.Images[0].Data) == 0 {
+		t.Fatal("image data is empty")
+	}
 
 	var resp ChatCompletionResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
@@ -109,6 +120,27 @@ func TestChatCompletions_buildsPromptFromMixedMessageContent_whenRequestIsNonStr
 	}
 	if got := resp.Choices[0].Message.Content; got != "completion" {
 		t.Fatalf("response content = %q, want %q", got, "completion")
+	}
+}
+
+func TestChatCompletions_rejectsExternalImageURL(t *testing.T) {
+	fake := &fakeChatClient{completeText: "completion"}
+	handler := &Handler{client: fake}
+
+	body := `{"model":"smart","messages":[{"role":"user","content":[{"type":"text","text":"What is this?"},{"type":"image_url","image_url":{"url":"https://example.com/image.png"}}]}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	handler.ChatCompletions(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if fake.completeCalls != 0 {
+		t.Fatalf("complete calls = %d, want 0", fake.completeCalls)
+	}
+	if !strings.Contains(rec.Body.String(), "data:image") {
+		t.Fatalf("error body = %s, want mention of data:image", rec.Body.String())
 	}
 }
 

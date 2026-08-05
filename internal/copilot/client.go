@@ -34,6 +34,7 @@ type CompletionInput struct {
 	Mode           string
 	Stream         bool
 	StreamModel    string // model name echoed back in SSE chunks
+	Images         []ImageInput
 }
 
 // Client manages Copilot WebSocket sessions.
@@ -54,6 +55,7 @@ type Client struct {
 	timeZone       string // timezone sent in start request body
 	startURL       string
 	wsURL          string
+	attachmentsURL string
 	janitorCancel  context.CancelFunc
 	janitorDone    chan struct{}
 }
@@ -110,6 +112,7 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		timeZone:       cfg.TimeZone,
 		startURL:       cfg.StartURL,
 		wsURL:          cfg.WSURL,
+		attachmentsURL: cfg.AttachmentsURL,
 	}
 	c.sessionMgr = newSessionManagerWithWarmPool(cfg.MaxSessions, cfg.WarmSessions, c.startAnon)
 	c.startJanitor()
@@ -168,6 +171,12 @@ func (c *Client) startPromptEvents(ctx context.Context, input CompletionInput) (
 			return nil, nil, fmt.Errorf("get session: %w", err)
 		}
 
+		imageURLs, err := c.uploadImages(ctx, session.Cookies, input.Images)
+		if err != nil {
+			c.releaseSession(session)
+			return nil, nil, err
+		}
+
 		events := make(chan StreamEvent, 128)
 		pump := c.newConnPump(ctx, session.Conn)
 		go func() {
@@ -175,9 +184,9 @@ func (c *Client) startPromptEvents(ctx context.Context, input CompletionInput) (
 			pump.run(events)
 		}()
 
-		log.Printf("copilot send event=send session_id=%s conversation_id=%s prompt_len=%d",
-			session.ClientSessionID, session.ConversationID, len(input.Prompt))
-		if err := pump.send(ctx, newSendMessage(input.Prompt, session.ConversationID, input.Mode)); err == nil {
+		log.Printf("copilot send event=send session_id=%s conversation_id=%s prompt_len=%d images=%d",
+			session.ClientSessionID, session.ConversationID, len(input.Prompt), len(imageURLs))
+		if err := pump.send(ctx, newSendMessage(input.Prompt, session.ConversationID, input.Mode, imageURLs)); err == nil {
 			return session, events, nil
 		} else {
 			c.InvalidateSession(session.ConversationID)
