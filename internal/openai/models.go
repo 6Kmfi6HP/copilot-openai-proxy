@@ -19,37 +19,34 @@ type ModelInfo struct {
 }
 
 // WriteModels returns the list of available models.
-// The proxy exposes Copilot's conversation modes as OpenAI-compatible model names.
-func WriteModels(w http.ResponseWriter) {
-	models := []ModelInfo{
-		{
+// Model IDs are Copilot conversation modes discovered from the upstream catalog.
+func WriteModels(w http.ResponseWriter, models []string) {
+	if len(models) == 0 {
+		models = []string{"smart"}
+	}
+	data := make([]ModelInfo, 0, len(models))
+	for _, id := range models {
+		if id == "" {
+			continue
+		}
+		data = append(data, ModelInfo{
+			ID:      id,
+			Object:  "model",
+			Created: 0,
+			OwnedBy: "copilot",
+		})
+	}
+	if len(data) == 0 {
+		data = []ModelInfo{{
 			ID:      "smart",
 			Object:  "model",
 			Created: 0,
 			OwnedBy: "copilot",
-		},
-		{
-			ID:      "creative",
-			Object:  "model",
-			Created: 0,
-			OwnedBy: "copilot",
-		},
-		{
-			ID:      "balanced",
-			Object:  "model",
-			Created: 0,
-			OwnedBy: "copilot",
-		},
-		{
-			ID:      "precise",
-			Object:  "model",
-			Created: 0,
-			OwnedBy: "copilot",
-		},
+		}}
 	}
 	writeJSON(w, http.StatusOK, ModelsResponse{
 		Object: "list",
-		Data:   models,
+		Data:   data,
 	})
 }
 

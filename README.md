@@ -16,7 +16,7 @@ This project is useful when you want to point OpenAI SDKs, curl scripts, or exis
 - OpenAI-compatible endpoints: `POST /v1/chat/completions`, `GET /v1/models`
 - Streaming SSE responses
 - Vision input via OpenAI `image_url` data URIs (PNG/JPEG → Copilot attachments)
-- Public models: `smart`, `creative`, `balanced`, `precise`
+- Dynamic `GET /v1/models` from Copilot's frontend conversation-mode catalog (cached)
 - Optional bearer-token protection
 - Multi-arch Docker image publishing to GHCR
 - GitHub Releases with prebuilt binaries
@@ -158,7 +158,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
   -H "Authorization: Bearer sk-change-me" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "precise",
+    "model": "reasoning",
     "stream": true,
     "messages": [
       {"role": "user", "content": "stream a short answer"}
@@ -167,6 +167,8 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 ```
 
 ### List models
+
+Model IDs are discovered automatically from Copilot's public web bundle (conversation modes such as `smart`, `reasoning`, `coco`, `search`, `study`, …) and cached for about an hour. Legacy request aliases `creative` / `balanced` / `precise` still work for chat completions but are not guaranteed to appear in this list.
 
 ```bash
 curl http://127.0.0.1:8080/v1/models \
@@ -275,6 +277,7 @@ Contribution guide: [CONTRIBUTING.md](CONTRIBUTING.md)
 - This is an unofficial Copilot proxy. Upstream protocol or anti-abuse changes may require updates in this project.
 - Tool calling and function calling are not implemented.
 - The proxy focuses on chat completions and model listing, not the full OpenAI API surface.
+- `/v1/models` is scraped from Copilot's frontend JS catalog (not a first-party models API). On fetch failure the proxy serves the last successful list, or `smart` as a last resort.
 - **Vision input:** OpenAI multimodal `image_url` parts are supported when the URL is a `data:image/png` or `data:image/jpeg` (also `image/jpg`) base64 data URI. Images are uploaded to Copilot `POST /c/api/attachments` with the anonymous session cookie, then attached on the WebSocket `send` as `{type:"image",url:...}` before the text part. Limits: up to 4 images per request, 10 MiB each. External `https://` image URLs are rejected (not fetched).
 - When upstream Copilot generates an image, the proxy embeds it as Markdown `![image](url)` inside `message.content` / SSE `delta.content`. There is no `/v1/images/generations` endpoint.
 

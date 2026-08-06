@@ -56,6 +56,7 @@ type Client struct {
 	startURL       string
 	wsURL          string
 	attachmentsURL string
+	modelCatalog   *ModelCatalog
 	janitorCancel  context.CancelFunc
 	janitorDone    chan struct{}
 }
@@ -114,6 +115,7 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		wsURL:          cfg.WSURL,
 		attachmentsURL: cfg.AttachmentsURL,
 	}
+	c.modelCatalog = newModelCatalog(c.http, modelsBaseURLFromStart(cfg.StartURL), defaultModelsTTL)
 	c.sessionMgr = newSessionManagerWithWarmPool(cfg.MaxSessions, cfg.WarmSessions, c.startAnon)
 	c.startJanitor()
 	return c, nil

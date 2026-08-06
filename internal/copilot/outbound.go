@@ -41,17 +41,19 @@ func newSendMessage(prompt, conversationID, mode string, imageURLs []string) sen
 }
 
 func protocolModeAndProduct(model string) (string, string) {
-	switch strings.ToLower(strings.TrimSpace(model)) {
+	normalized := strings.ToLower(strings.TrimSpace(model))
+	switch normalized {
 	case "creative":
 		return "chat", "creative"
 	case "balanced":
 		return "chat", "balanced"
 	case "precise":
 		return "chat", "precise"
-	case "", "smart":
+	case "":
 		return "smart", "smart"
 	default:
-		return "smart", "smart"
+		// Dynamic Copilot conversation modes use mode=product=<id>.
+		return normalized, normalized
 	}
 }
 

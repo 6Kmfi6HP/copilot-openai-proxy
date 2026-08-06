@@ -150,7 +150,9 @@ func Test_protocolModeAndProduct_mapsPublicModelsToCopilotFields(t *testing.T) {
 		{name: "balanced uses chat product balanced", model: "balanced", wantMode: "chat", wantProduct: "balanced"},
 		{name: "precise uses chat product precise", model: "precise", wantMode: "chat", wantProduct: "precise"},
 		{name: "normalizes case and whitespace", model: " Precise ", wantMode: "chat", wantProduct: "precise"},
-		{name: "unknown falls back to smart", model: "gpt-4", wantMode: "smart", wantProduct: "smart"},
+		{name: "reasoning passes through", model: "reasoning", wantMode: "reasoning", wantProduct: "reasoning"},
+		{name: "coco passes through", model: "coco", wantMode: "coco", wantProduct: "coco"},
+		{name: "unknown id passes through", model: "gpt-4", wantMode: "gpt-4", wantProduct: "gpt-4"},
 	}
 
 	for _, tt := range tests {

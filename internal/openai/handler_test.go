@@ -23,6 +23,20 @@ type fakeChatClient struct {
 	streamErr     error
 	streamCalls   int
 	streamFunc    func(context.Context, copilot.CompletionInput) (<-chan copilot.StreamEvent, error)
+	models        []string
+	modelsErr     error
+	modelsCalls   int
+}
+
+func (f *fakeChatClient) ListModels(ctx context.Context) ([]string, error) {
+	f.modelsCalls++
+	if f.modelsErr != nil {
+		return nil, f.modelsErr
+	}
+	if f.models != nil {
+		return append([]string(nil), f.models...), nil
+	}
+	return []string{"smart"}, nil
 }
 
 func (f *fakeChatClient) Complete(ctx context.Context, input copilot.CompletionInput) (string, string, error) {
@@ -60,7 +74,10 @@ func Test_modeForModel_usesSmartUpstreamMode_whenPublicModelVaries(t *testing.T)
 		{name: "balanced model", model: "balanced", want: "balanced"},
 		{name: "precise model", model: "precise", want: "precise"},
 		{name: "model is normalized", model: " Creative ", want: "creative"},
-		{name: "unknown model", model: "gpt-4", want: "smart"},
+		{name: "reasoning model passes through", model: "reasoning", want: "reasoning"},
+		{name: "coco model passes through", model: "coco", want: "coco"},
+		{name: "unknown plausible model passes through", model: "gpt-4", want: "gpt-4"},
+		{name: "invalid model falls back", model: "bad model!", want: "smart"},
 	}
 
 	for _, tt := range tests {
@@ -155,7 +172,8 @@ func TestChatCompletions_usesSelectedModeAndResponseModel(t *testing.T) {
 		{name: "balanced model", requestModel: "balanced", wantMode: "balanced", wantRespModel: "balanced"},
 		{name: "precise model", requestModel: "precise", wantMode: "precise", wantRespModel: "precise"},
 		{name: "normalized model", requestModel: " Creative ", wantMode: "creative", wantRespModel: "creative"},
-		{name: "unknown model falls back", requestModel: "gpt-4", wantMode: "smart", wantRespModel: "smart"},
+		{name: "reasoning model", requestModel: "reasoning", wantMode: "reasoning", wantRespModel: "reasoning"},
+		{name: "unknown plausible model passes through", requestModel: "gpt-4", wantMode: "gpt-4", wantRespModel: "gpt-4"},
 		{name: "missing model defaults", requestModel: "", wantMode: "smart", wantRespModel: "smart"},
 	}
 
@@ -189,6 +207,55 @@ func TestChatCompletions_usesSelectedModeAndResponseModel(t *testing.T) {
 				t.Fatalf("response model = %q, want %q", resp.Model, tt.wantRespModel)
 			}
 		})
+	}
+}
+
+func TestListModels_returnsCatalogFromClient(t *testing.T) {
+	fake := &fakeChatClient{models: []string{"smart", "reasoning", "coco", "search"}}
+	handler := &Handler{client: fake}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	rec := httptest.NewRecorder()
+	handler.ListModels(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if fake.modelsCalls != 1 {
+		t.Fatalf("ListModels calls = %d, want 1", fake.modelsCalls)
+	}
+	var resp ModelsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Object != "list" {
+		t.Fatalf("object = %q, want list", resp.Object)
+	}
+	if len(resp.Data) != 4 {
+		t.Fatalf("data len = %d, want 4: %#v", len(resp.Data), resp.Data)
+	}
+	if resp.Data[0].ID != "smart" || resp.Data[1].ID != "reasoning" || resp.Data[2].ID != "coco" {
+		t.Fatalf("unexpected models: %#v", resp.Data)
+	}
+}
+
+func TestListModels_fallsBackToSmartOnCatalogError(t *testing.T) {
+	fake := &fakeChatClient{modelsErr: context.DeadlineExceeded}
+	handler := &Handler{client: fake}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	rec := httptest.NewRecorder()
+	handler.ListModels(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var resp ModelsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Data) != 1 || resp.Data[0].ID != "smart" {
+		t.Fatalf("fallback models = %#v, want [smart]", resp.Data)
 	}
 }
 

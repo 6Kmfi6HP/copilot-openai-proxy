@@ -34,6 +34,7 @@ func NewHandler(client *copilot.Client) *Handler {
 type chatClient interface {
 	Complete(rctx context.Context, input copilot.CompletionInput) (string, string, error)
 	StreamEvents(rctx context.Context, input copilot.CompletionInput) (<-chan copilot.StreamEvent, error)
+	ListModels(rctx context.Context) ([]string, error)
 }
 
 // ChatCompletions handles POST /v1/chat/completions.
@@ -87,22 +88,52 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 }
 
 func normalizeModel(model string) string {
-	switch strings.ToLower(strings.TrimSpace(model)) {
-	case "", "smart":
-		return "smart"
-	case "creative":
-		return "creative"
-	case "balanced":
-		return "balanced"
-	case "precise":
-		return "precise"
-	default:
+	trimmed := strings.TrimSpace(model)
+	if trimmed == "" {
 		return "smart"
 	}
+	normalized := strings.ToLower(trimmed)
+	switch normalized {
+	case "smart", "creative", "balanced", "precise":
+		return normalized
+	}
+	// Pass through dynamic Copilot mode IDs; reject obvious garbage.
+	if !isValidModelID(normalized) {
+		return "smart"
+	}
+	return normalized
+}
+
+func isValidModelID(id string) bool {
+	if id == "" || len(id) > 64 {
+		return false
+	}
+	if strings.ContainsAny(id, " \t\r\n") {
+		return false
+	}
+	for _, r := range id {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' && r != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 func modeForModel(model string) string {
 	return normalizeModel(model)
+}
+
+// ListModels handles GET /v1/models using the upstream Copilot mode catalog.
+func (h *Handler) ListModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "only GET is supported")
+		return
+	}
+	modes, err := h.client.ListModels(r.Context())
+	if err != nil || len(modes) == 0 {
+		modes = []string{"smart"}
+	}
+	WriteModels(w, modes)
 }
 
 // fullResponse handles a non-streaming completion request.

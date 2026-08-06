@@ -12,9 +12,7 @@ func New(handler *openai.Handler, cfg *config.Config) *http.Server {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/v1/chat/completions", handler.ChatCompletions)
-	mux.HandleFunc("/v1/models", func(w http.ResponseWriter, r *http.Request) {
-		openai.WriteModels(w)
-	})
+	mux.HandleFunc("/v1/models", handler.ListModels)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		openai.WriteHealth(w)
 	})
