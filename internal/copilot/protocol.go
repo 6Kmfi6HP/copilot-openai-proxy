@@ -24,13 +24,14 @@ const (
 
 // StreamEvent is a single event emitted from the Copilot WebSocket read loop.
 type StreamEvent struct {
-	Type           StreamEventType
-	Text           string // EventAppendText
-	MessageID      string // EventStartMessage / EventImageGenerated / EventDone
-	ConversationID string // EventStartMessage
-	ImageURL       string // EventImageGenerated
-	Err            error  // EventError
-	ChallengeParam string // EventChallenge: hashcash parameter
+	Type            StreamEventType
+	Text            string // EventAppendText
+	MessageID       string // EventStartMessage / EventImageGenerated / EventDone
+	ConversationID  string // EventStartMessage
+	ImageURL        string // EventImageGenerated
+	Err             error  // EventError
+	ChallengeParam  string // EventChallenge: hashcash parameter
+	ChallengeMethod string // EventChallenge: challenge method (e.g. "hashcash")
 }
 
 // serverEnvelope wraps messages received from the Copilot WebSocket.
@@ -93,9 +94,13 @@ type sendMessage struct {
 	Product        string        `json:"product"`
 }
 
-type challengeAnswerMessage struct {
+// challengeResponseMessage is the reply to a Copilot post-connect "challenge"
+// event. The current wire format is
+// {"event":"challengeResponse","token":"<nonce>","method":"hashcash"}.
+type challengeResponseMessage struct {
 	Event  string `json:"event"`
-	Answer string `json:"answer"`
+	Token  string `json:"token"`
+	Method string `json:"method"`
 }
 
 func defaultSetOptions() setOptionsMessage {
@@ -184,8 +189,9 @@ func parseServerEvent(raw []byte) (StreamEvent, error) {
 		// Hashcash challenge: the client needs to solve this and respond.
 		// For now we pass it through; the readLoop will handle it.
 		return StreamEvent{
-			Type:           EventChallenge,
-			ChallengeParam: env.Parameter,
+			Type:            EventChallenge,
+			ChallengeParam:  env.Parameter,
+			ChallengeMethod: env.Method,
 		}, nil
 	case "error":
 		body := firstNonEmpty(env.Body, env.Text, env.ErrorCode)

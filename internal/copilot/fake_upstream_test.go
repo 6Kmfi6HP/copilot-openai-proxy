@@ -30,15 +30,18 @@ type fakeCopilotUpstream struct {
 	scenario fakeCopilotScenario
 	server   *httptest.Server
 
-	mu                sync.Mutex
-	startRequests     []startRequestBody
-	attachmentUploads []attachmentUploadRecord
-	outboundEvents    []string
-	lastSend          sendMessage
-	sendObserved      chan struct{}
-	sendOnce          sync.Once
-	chatCount         int
-	handlerErrors     chan error
+	mu                    sync.Mutex
+	startRequests         []startRequestBody
+	attachmentUploads     []attachmentUploadRecord
+	outboundEvents        []string
+	lastSend              sendMessage
+	sendObserved          chan struct{}
+	sendOnce              sync.Once
+	chatCount             int
+	temporarySessionCount int
+	chatSessionKeyHeader  string
+	chatSessionKeyQuery   string
+	handlerErrors         chan error
 }
 
 type attachmentUploadRecord struct {
@@ -66,6 +69,8 @@ func newFakeCopilotUpstream(t *testing.T, scenario fakeCopilotScenario) *fakeCop
 		switch r.URL.Path {
 		case "/c/api/start":
 			upstream.handleStart(w, r)
+		case "/c/api/user/sessions/temporary":
+			upstream.handleTemporarySession(w, r)
 		case "/c/api/attachments":
 			upstream.handleAttachments(w, r)
 		case "/c/api/chat":
@@ -149,6 +154,15 @@ func (f *fakeCopilotUpstream) recordedAttachments() []attachmentUploadRecord {
 	out := make([]attachmentUploadRecord, len(f.attachmentUploads))
 	copy(out, f.attachmentUploads)
 	return out
+}
+
+func (f *fakeCopilotUpstream) chatSessionKey() (header, query string, tempSessionCount int) {
+	f.t.Helper()
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.chatSessionKeyHeader, f.chatSessionKeyQuery, f.temporarySessionCount
 }
 
 func (f *fakeCopilotUpstream) handleAttachments(w http.ResponseWriter, r *http.Request) {
@@ -255,7 +269,30 @@ func (f *fakeCopilotUpstream) handleStart(w http.ResponseWriter, r *http.Request
 	}
 }
 
+func (f *fakeCopilotUpstream) handleTemporarySession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "only POST is supported", http.StatusMethodNotAllowed)
+		return
+	}
+	defer r.Body.Close()
+	_, _ = io.ReadAll(r.Body)
+
+	f.mu.Lock()
+	f.temporarySessionCount++
+	f.mu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(temporarySessionResponse{SessionKey: "temp-session-test"}); err != nil {
+		f.recordHandlerError("encode temporary session response: %w", err)
+	}
+}
+
 func (f *fakeCopilotUpstream) handleChat(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	f.chatSessionKeyHeader = r.Header.Get(temporarySessionKeyHeader)
+	f.chatSessionKeyQuery = r.URL.Query().Get("temporarySessionKey")
+	f.mu.Unlock()
+
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
 			return true

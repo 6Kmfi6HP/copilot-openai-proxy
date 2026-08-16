@@ -11,14 +11,15 @@ import (
 )
 
 type SessionState struct {
-	Conn            *websocket.Conn
-	ConversationID  string
-	ClientSessionID string
-	Cookies         []*http.Cookie
-	CreatedAt       time.Time
-	LastUsedAt      time.Time
-	lease           *sessionLease
-	connected       atomic.Bool
+	Conn                *websocket.Conn
+	ConversationID      string
+	ClientSessionID     string
+	TemporarySessionKey string
+	Cookies             []*http.Cookie
+	CreatedAt           time.Time
+	LastUsedAt          time.Time
+	lease               *sessionLease
+	connected           atomic.Bool
 }
 
 func (s *SessionState) IsConnected() bool {

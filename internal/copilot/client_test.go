@@ -11,7 +11,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-func Test_readLoop_answersChallengeWithEventField(t *testing.T) {
+func Test_readLoop_answersChallengeWithChallengeResponse(t *testing.T) {
 	responseCh := make(chan []byte, 1)
 	serverErrCh := make(chan error, 1)
 	upgrader := websocket.Upgrader{}
@@ -73,20 +73,20 @@ func Test_readLoop_answersChallengeWithEventField(t *testing.T) {
 
 	var got struct {
 		Event  string `json:"event"`
-		Type   string `json:"type"`
-		Answer string `json:"answer"`
+		Token  string `json:"token"`
+		Method string `json:"method"`
 	}
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatalf("json.Unmarshal returned error: %v", err)
 	}
-	if got.Event != "answer" {
-		t.Fatalf("event = %q, want answer", got.Event)
+	if got.Event != "challengeResponse" {
+		t.Fatalf("event = %q, want challengeResponse", got.Event)
 	}
-	if got.Type != "" {
-		t.Fatalf("type = %q, want empty", got.Type)
+	if got.Method != "hashcash" {
+		t.Fatalf("method = %q, want hashcash", got.Method)
 	}
-	if got.Answer != solveHashcash("seed:1") {
-		t.Fatalf("answer = %q, want %q", got.Answer, solveHashcash("seed:1"))
+	if got.Token != solveHashcash("seed:1") {
+		t.Fatalf("token = %q, want %q", got.Token, solveHashcash("seed:1"))
 	}
 
 	select {

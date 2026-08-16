@@ -118,9 +118,9 @@ func (p *connPump) readLoop(events chan<- StreamEvent) {
 
 		if evt.Type == EventChallenge {
 			answer := solveHashcash(evt.ChallengeParam)
-			log.Printf("copilot challenge solved: param=%s answer=%s", evt.ChallengeParam, answer)
-			if err := p.send(p.ctx, newChallengeAnswer(answer)); err != nil {
-				log.Printf("copilot failed to send challenge answer: %v", err)
+			log.Printf("copilot challenge solved: method=%s param=%s answer=%s", evt.ChallengeMethod, evt.ChallengeParam, answer)
+			if err := p.send(p.ctx, newChallengeResponse(evt.ChallengeMethod, answer)); err != nil {
+				log.Printf("copilot failed to send challenge response: %v", err)
 			}
 			continue
 		}

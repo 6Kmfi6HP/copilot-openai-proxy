@@ -87,16 +87,29 @@ func Test_newSendMessage_placesImagePartsBeforeText_whenImageURLsProvided(t *tes
 	}
 }
 
-func Test_newChallengeAnswer_usesEventField_whenMarshaled(t *testing.T) {
-	data, err := json.Marshal(newChallengeAnswer("42"))
+func Test_newChallengeResponse_usesChallengeResponseWireFormat_whenMarshaled(t *testing.T) {
+	data, err := json.Marshal(newChallengeResponse("hashcash", "42"))
 
 	if err != nil {
 		t.Fatalf("json.Marshal returned error: %v", err)
 	}
 
-	want := `{"event":"answer","answer":"42"}`
+	want := `{"event":"challengeResponse","token":"42","method":"hashcash"}`
 	if string(data) != want {
-		t.Fatalf("challenge answer JSON = %s, want %s", data, want)
+		t.Fatalf("challenge response JSON = %s, want %s", data, want)
+	}
+}
+
+func Test_newChallengeResponse_defaultsMethodToHashcash_whenMethodEmpty(t *testing.T) {
+	data, err := json.Marshal(newChallengeResponse("", "7"))
+
+	if err != nil {
+		t.Fatalf("json.Marshal returned error: %v", err)
+	}
+
+	want := `{"event":"challengeResponse","token":"7","method":"hashcash"}`
+	if string(data) != want {
+		t.Fatalf("challenge response JSON = %s, want %s", data, want)
 	}
 }
 
@@ -167,7 +180,7 @@ func Test_protocolModeAndProduct_mapsPublicModelsToCopilotFields(t *testing.T) {
 }
 
 func Test_buildWebSocketURL_addsReferenceQuery_whenCalled(t *testing.T) {
-	rawURL, clientSessionID, err := buildWebSocketURL(defaultCopilotWSURL)
+	rawURL, clientSessionID, err := buildWebSocketURL(defaultCopilotWSURL, "")
 
 	if err != nil {
 		t.Fatalf("buildWebSocketURL returned error: %v", err)
@@ -184,6 +197,23 @@ func Test_buildWebSocketURL_addsReferenceQuery_whenCalled(t *testing.T) {
 	}
 	if got := parsed.Query().Get("clientSessionId"); got != clientSessionID {
 		t.Fatalf("clientSessionId query = %q, want %q", got, clientSessionID)
+	}
+	if parsed.Query().Has("temporarySessionKey") {
+		t.Fatalf("temporarySessionKey should be absent when session key is empty")
+	}
+}
+
+func Test_buildWebSocketURL_addsTemporarySessionKey_whenProvided(t *testing.T) {
+	rawURL, _, err := buildWebSocketURL(defaultCopilotWSURL, "sess-abc")
+	if err != nil {
+		t.Fatalf("buildWebSocketURL returned error: %v", err)
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatalf("url.Parse returned error: %v", err)
+	}
+	if got := parsed.Query().Get("temporarySessionKey"); got != "sess-abc" {
+		t.Fatalf("temporarySessionKey = %q, want %q", got, "sess-abc")
 	}
 }
 

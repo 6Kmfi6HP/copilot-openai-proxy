@@ -33,6 +33,7 @@ func main() {
 		ProxyURL:       cfg.ProxyURL,
 		StartURL:       cfg.CopilotStartURL,
 		WSURL:          cfg.CopilotWSURL,
+		SessionsURL:    cfg.CopilotSessionsURL,
 	})
 	if err != nil {
 		log.Fatalf("failed to create copilot client: %v", err)

@@ -90,15 +90,18 @@ func TestConnPump_SerializesPromptAndChallengeWrites(t *testing.T) {
 		t.Fatalf("prompt conversationID = %q, want %q", prompt.ConversationID, "conv-pump")
 	}
 
-	var answer challengeAnswerMessage
+	var answer challengeResponseMessage
 	if err := json.Unmarshal(rawAnswer, &answer); err != nil {
 		t.Fatalf("json.Unmarshal(answer) error = %v", err)
 	}
-	if answer.Event != "answer" {
-		t.Fatalf("answer event = %q, want %q", answer.Event, "answer")
+	if answer.Event != "challengeResponse" {
+		t.Fatalf("answer event = %q, want %q", answer.Event, "challengeResponse")
 	}
-	if answer.Answer != solveHashcash("seed:1") {
-		t.Fatalf("answer = %q, want %q", answer.Answer, solveHashcash("seed:1"))
+	if answer.Method != "hashcash" {
+		t.Fatalf("answer method = %q, want %q", answer.Method, "hashcash")
+	}
+	if answer.Token != solveHashcash("seed:1") {
+		t.Fatalf("answer token = %q, want %q", answer.Token, solveHashcash("seed:1"))
 	}
 
 	select {
