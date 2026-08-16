@@ -36,6 +36,8 @@ func newStartRetryUpstream(t *testing.T, scenario startRetryScenario) *startRetr
 		switch r.URL.Path {
 		case "/c/api/start":
 			upstream.handleStart(w, r)
+		case "/c/api/user/sessions/temporary":
+			upstream.handleTemporarySession(w, r)
 		case "/c/api/chat":
 			upstream.handleChat(w, r)
 		default:
@@ -92,6 +94,13 @@ func (u *startRetryUpstream) handleStart(w http.ResponseWriter, r *http.Request)
 		IsBlocked:             false,
 	}); err != nil {
 		u.t.Fatalf("Encode(start response) error = %v", err)
+	}
+}
+
+func (u *startRetryUpstream) handleTemporarySession(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(temporarySessionResponse{SessionKey: "temp-session-retry"}); err != nil {
+		u.t.Fatalf("Encode(temporary session response) error = %v", err)
 	}
 }
 

@@ -55,6 +55,11 @@ func newDoneHoldingUpstream(t *testing.T, wsClosed chan<- struct{}, serverErrCh 
 		switch r.URL.Path {
 		case "/c/api/start":
 			handleLifecycleStart(t, w, r)
+		case "/c/api/user/sessions/temporary":
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(temporarySessionResponse{SessionKey: "temp-session-lifecycle"}); err != nil {
+				t.Fatalf("json.NewEncoder().Encode() error = %v", err)
+			}
 		case "/c/api/chat":
 			handleDoneHoldingChat(r, w, upgrader, wsClosed, serverErrCh)
 		default:

@@ -126,14 +126,28 @@ PROXY_URL=http://192.168.1.10:7890 \
 
 ### Advanced QA Overrides
 
-For deterministic local QA only, you can override the upstream start and WebSocket endpoints with environment variables. There are no matching CLI flags for these advanced overrides.
+For deterministic local QA only, you can override the upstream start, WebSocket, and temporary-session endpoints with environment variables. There are no matching CLI flags for these advanced overrides.
 
 ```bash
 COPILOT_START_URL=http://127.0.0.1:8081/c/api/start
 COPILOT_WS_URL=ws://127.0.0.1:8081/c/api/chat
+COPILOT_SESSIONS_URL=http://127.0.0.1:8081/c/api/user/sessions/temporary
 ```
 
-When unset, the proxy uses the normal Microsoft Copilot endpoints.
+When unset, the proxy uses the normal Microsoft Copilot endpoints. `COPILOT_SESSIONS_URL` defaults to the temporary-session endpoint derived from `COPILOT_START_URL`.
+
+### Anonymous Access, HTTP 460 and 451
+
+Copilot's chat WebSocket now requires an anonymous **temporary conversation session key**. The proxy mints one via `POST /c/api/user/sessions/temporary` after acquiring the anonymous cookie, then presents it on the handshake as both the `temporarySessionKey` query parameter and the `X-Copilot-TemporarySessionKey` header. Without it the chat endpoint rejects the handshake with **HTTP 460**.
+
+Microsoft is also rolling out an `anonymous-block-page` flight that blocks anonymous Copilot access from some regions/IPs. When active, `POST /c/api/user/sessions/temporary` returns **HTTP 451** and the proxy surfaces an actionable error:
+
+```
+copilot temporary session returned 451: ... — anonymous Copilot access appears blocked
+for this IP/region; route outbound traffic through PROXY_URL to a supported region
+```
+
+If you hit 460/451, route outbound traffic through `PROXY_URL` (or `HTTPS_PROXY`) to a region where anonymous Copilot is still available.
 
 ## API Examples
 

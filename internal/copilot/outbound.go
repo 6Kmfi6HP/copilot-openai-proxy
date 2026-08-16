@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func buildWebSocketURL(baseURL string) (string, string, error) {
+func buildWebSocketURL(baseURL, sessionKey string) (string, string, error) {
 	clientSessionID := uuid.NewString()
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
@@ -17,6 +17,9 @@ func buildWebSocketURL(baseURL string) (string, string, error) {
 	query := parsed.Query()
 	query.Set("api-version", "2")
 	query.Set("clientSessionId", clientSessionID)
+	if sessionKey != "" {
+		query.Set("temporarySessionKey", sessionKey)
+	}
 	parsed.RawQuery = query.Encode()
 	return parsed.String(), clientSessionID, nil
 }
@@ -57,10 +60,14 @@ func protocolModeAndProduct(model string) (string, string) {
 	}
 }
 
-func newChallengeAnswer(answer string) challengeAnswerMessage {
-	return challengeAnswerMessage{
-		Event:  "answer",
-		Answer: answer,
+func newChallengeResponse(method, token string) challengeResponseMessage {
+	if method == "" {
+		method = "hashcash"
+	}
+	return challengeResponseMessage{
+		Event:  "challengeResponse",
+		Token:  token,
+		Method: method,
 	}
 }
 

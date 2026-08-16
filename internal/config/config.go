@@ -8,22 +8,23 @@ import (
 
 // Config holds the application configuration.
 type Config struct {
-	Addr            string // listen address, e.g. "127.0.0.1:8080"
-	APIKey          string // optional bearer token for client auth
-	MaxSessions     int    // max concurrent Copilot WebSocket sessions
-	WarmSessions    int
-	SessionTTL      int // session idle TTL in seconds
-	CleanupInterval int // session cleanup interval in seconds
-	ConnTimeout     int
-	Timeout         int
-	WSReadTimeout   int
-	WSWriteTimeout  int
-	WSPingInterval  int
-	Debug           bool   // print raw protocol logs
-	TimeZone        string // timezone sent to Copilot start endpoint
-	ProxyURL        string // optional outbound proxy URL for Copilot traffic
-	CopilotStartURL string
-	CopilotWSURL    string
+	Addr               string // listen address, e.g. "127.0.0.1:8080"
+	APIKey             string // optional bearer token for client auth
+	MaxSessions        int    // max concurrent Copilot WebSocket sessions
+	WarmSessions       int
+	SessionTTL         int // session idle TTL in seconds
+	CleanupInterval    int // session cleanup interval in seconds
+	ConnTimeout        int
+	Timeout            int
+	WSReadTimeout      int
+	WSWriteTimeout     int
+	WSPingInterval     int
+	Debug              bool   // print raw protocol logs
+	TimeZone           string // timezone sent to Copilot start endpoint
+	ProxyURL           string // optional outbound proxy URL for Copilot traffic
+	CopilotStartURL    string
+	CopilotWSURL       string
+	CopilotSessionsURL string
 }
 
 // Load reads configuration from flags / environment.
@@ -45,6 +46,7 @@ func Load() *Config {
 	flag.StringVar(&cfg.ProxyURL, "proxy-url", envOr("PROXY_URL", ""), "outbound proxy URL for Copilot HTTP/WebSocket traffic")
 	cfg.CopilotStartURL = envOr("COPILOT_START_URL", "")
 	cfg.CopilotWSURL = envOr("COPILOT_WS_URL", "")
+	cfg.CopilotSessionsURL = envOr("COPILOT_SESSIONS_URL", "")
 
 	// Parse -port separately so it merges with -host.
 	port := flag.String("port", envOr("PORT", "8080"), "listen port")

@@ -36,7 +36,12 @@ func (c *Client) startAnonOnce(ctx context.Context) (*SessionState, error) {
 		convID = uuid.NewString()
 	}
 
-	wsURL, clientSessionID, err := buildWebSocketURL(c.wsURL)
+	sessionKey, err := c.acquireTemporarySessionKey(ctx, cookies)
+	if err != nil {
+		return nil, fmt.Errorf("copilot temporary session: %w", err)
+	}
+
+	wsURL, clientSessionID, err := buildWebSocketURL(c.wsURL, sessionKey)
 	if err != nil {
 		return nil, err
 	}
@@ -46,20 +51,28 @@ func (c *Client) startAnonOnce(ctx context.Context) (*SessionState, error) {
 	header.Set("Accept", "*/*")
 	header.Set("Origin", copilotOrigin)
 	header.Set("Cookie", collectCookies(cookies))
+	if sessionKey != "" {
+		header.Set(temporarySessionKeyHeader, sessionKey)
+	}
 
 	conn, resp, err := c.wsDialer.DialContext(ctx, wsURL, header)
 	if err != nil {
+		status := 0
+		if resp != nil {
+			status = resp.StatusCode
+		}
 		closeResponseBody(resp)
-		return nil, newRetryableSessionStartError("copilot websocket dial", err)
+		return nil, wrapDialError(status, sessionKey, err)
 	}
 
 	session := &SessionState{
-		Conn:            conn,
-		ConversationID:  convID,
-		ClientSessionID: clientSessionID,
-		Cookies:         cookies,
-		CreatedAt:       time.Now(),
-		LastUsedAt:      time.Now(),
+		Conn:                conn,
+		ConversationID:      convID,
+		ClientSessionID:     clientSessionID,
+		TemporarySessionKey: sessionKey,
+		Cookies:             cookies,
+		CreatedAt:           time.Now(),
+		LastUsedAt:          time.Now(),
 	}
 	session.setConnected(true)
 
@@ -73,6 +86,30 @@ func (c *Client) startAnonOnce(ctx context.Context) (*SessionState, error) {
 	}
 
 	return session, nil
+}
+
+// wrapDialError turns a WebSocket handshake failure into an actionable error.
+// HTTP 460/401 mean the anonymous temporary session key was missing/rejected or
+// anonymous access is blocked in this region, so retrying is pointless; other
+// statuses stay retryable to preserve transient-failure recovery.
+func wrapDialError(status int, sessionKey string, err error) error {
+	switch status {
+	case 460:
+		detail := "copilot rejected the websocket handshake (HTTP 460): anonymous chat requires a temporary session key"
+		if sessionKey == "" {
+			detail += " but none was obtained"
+		} else {
+			detail += " and the provided key was not accepted — anonymous access may be blocked in this IP/region " +
+				"(Microsoft 'anonymous-block-page' flight); route outbound traffic through PROXY_URL to a supported region"
+		}
+		return NewBlockedError(fmt.Sprintf("%s: %v", detail, err))
+	case http.StatusUnauthorized:
+		return NewBlockedError(fmt.Sprintf("copilot rejected the websocket handshake (HTTP 401): temporary session key rejected or expired: %v", err))
+	}
+	if status != 0 && isRetryableStartStatus(status) {
+		return newRetryableSessionStartMessage(fmt.Sprintf("copilot websocket dial returned %d: %v", status, err))
+	}
+	return newRetryableSessionStartError("copilot websocket dial", err)
 }
 
 func (c *Client) acquireAnonCookies(ctx context.Context) ([]*http.Cookie, string, error) {

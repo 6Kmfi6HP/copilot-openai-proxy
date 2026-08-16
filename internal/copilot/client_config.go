@@ -9,6 +9,7 @@ const (
 	defaultCopilotStartURL       = "https://copilot.microsoft.com/c/api/start"
 	defaultCopilotWSURL          = "wss://copilot.microsoft.com/c/api/chat"
 	defaultCopilotAttachmentsURL = "https://copilot.microsoft.com/c/api/attachments"
+	defaultCopilotSessionsURL    = "https://copilot.microsoft.com/c/api/user/sessions/temporary"
 	defaultTimeZone              = "Asia/Shanghai"
 )
 
@@ -28,6 +29,7 @@ type ClientConfig struct {
 	StartURL       string
 	WSURL          string
 	AttachmentsURL string
+	SessionsURL    string
 }
 
 func (cfg ClientConfig) normalized() ClientConfig {
@@ -52,6 +54,9 @@ func (cfg ClientConfig) normalized() ClientConfig {
 	if cfg.AttachmentsURL == "" {
 		cfg.AttachmentsURL = attachmentsURLFromStart(cfg.StartURL)
 	}
+	if cfg.SessionsURL == "" {
+		cfg.SessionsURL = sessionsURLFromStart(cfg.StartURL)
+	}
 	return cfg
 }
 
@@ -61,4 +66,15 @@ func attachmentsURLFromStart(startURL string) string {
 		return strings.TrimSuffix(startURL, "/start") + "/attachments"
 	}
 	return defaultCopilotAttachmentsURL
+}
+
+// sessionsURLFromStart derives the anonymous temporary-conversation session
+// endpoint from the start URL. Copilot's chat WebSocket handshake now requires a
+// temporary session key minted by POST /c/api/user/sessions/temporary.
+func sessionsURLFromStart(startURL string) string {
+	const suffix = "/c/api/start"
+	if strings.HasSuffix(startURL, suffix) {
+		return strings.TrimSuffix(startURL, "/start") + "/user/sessions/temporary"
+	}
+	return defaultCopilotSessionsURL
 }
